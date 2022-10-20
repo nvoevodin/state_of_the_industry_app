@@ -1,0 +1,3401 @@
+---
+title: "State of the Industry"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: 
+      version: 4
+      bootswatch: spacelab
+    orientation: columns
+    navbar:
+          - { icon: "fa-envelope", href: "mailto:research@tlc.nyc.gov? subject=Metrics Book Feedback", align: right }
+    vertical_layout: scroll
+---
+
+<style type="text/css">
+
+body {
+    background: #000000;
+    padding: 60px 0 0 8px;
+    color: white;
+}
+
+.chart-wrapper, .nav-tabs-custom, .sbframe-commentary {
+    background: #cbce08;
+    border: 1px solid #e2e2e200;
+    border-radius: 3px;
+    margin-bottom: 8px;
+    margin-right: 8px;
+}
+
+.leaflet-container {
+    background: #000;
+    outline: 0;
+}
+
+</style>
+
+<!-- Heat of the script End -->
+
+
+
+```{r setup, include=FALSE}
+
+# Loading libraries ---------------------
+library(scales)
+library(flexdashboard)
+library(htmltools)
+library(lubridate)
+library(data.table)
+library(dplyr)
+library(highcharter)
+library(RODBC)
+library(leaflet)
+library(leaflet.extras)
+library(raster)
+library(rgdal)
+library(DT)
+library(stringi)
+library(rgeos)
+library(tidyr)
+library(readxl)
+library(reshape2)
+library(janitor)
+library(DBI)
+library(odbc)
+library(icons)
+
+
+# Function that displays when was the last time the report was updated
+# It is conditional and will show differently depending on time that passed
+when_updated_func <- function(report_name, date) {
+  last_updated = as.numeric(lubridate::today() - ymd(date))
+  
+  if (last_updated <= 7) {
+    return(HTML(
+      paste0(
+        "<span style='font-size:15pt; font-weight: bolder; color: #05b705;'> UPDATED: ",
+        last_updated,
+        " DAY(s) AGO</span>"
+      )
+    ))
+  } else if (last_updated > 7 & last_updated <= 20) {
+    return(HTML(
+      paste0(
+        "<span style='font-size:15pt; font-weight: bolder; color = blue;'> UPDATED: ",
+        last_updated,
+        " DAY(s) AGO</span>"
+      )
+    ))
+  } else {
+    return(HTML(
+      paste0(
+        "<span style='font-size:15pt; font-weight: bolder; color = red;'> UPDATED: ",
+        last_updated,
+        " DAY(s) AGO</span>"
+      )
+    ))
+  }
+  
+  
+  
+}
+
+# Monthly Trips----------------------------------------------------------------------
+
+# Connecting to the DB
+policy_con = odbcConnect("TLC_PLCPRG_PRD", uid = "voevodinn")
+
+# Accounting for delays in data for different inds
+monthly_trips_year_mon <-
+  as.character(lubridate::floor_date(Sys.Date(), 'month') - months(1))
+monthly_trips_year_mon_fhv <-
+  as.character(lubridate::floor_date(Sys.Date(), 'month') - months(3))
+
+# Pulling daily counts from the warehouse
+monthly_trips_industries_data <- setDT(sqlQuery(
+  policy_con,
+  paste0(
+    "SELECT
+
+      DATEADD(MONTH, DATEDIFF(MONTH, 0, [metric_day]), 0) as year_month
+      ,[industry] as industry
+      ,sum([count_trips]) as count_trips
+  FROM [TLC_PLCPRG_PRD].[dbo].[industry_indicators_daily_trips]
+  where [metric_day] <",
+  "'",
+  monthly_trips_year_mon,
+  "'",
+  " and [metric_day] >= '2012-01-01'
+  GROUP BY DATEADD(MONTH, DATEDIFF(MONTH, 0, [metric_day]), 0),[industry]
+"
+  )
+))
+
+# Keeping traditionals only
+monthly_trips_fhv_data <-
+  monthly_trips_industries_data[monthly_trips_industries_data$industry %in% c('fhv_livery', 'fhv_black_car', 'fhv_lux_limo') &
+                                  monthly_trips_industries_data$year_month <= monthly_trips_year_mon_fhv, ]
+
+# Renaming
+monthly_trips_ind_data <-
+  setDT(monthly_trips_industries_data)[industry %in% c('fhv_livery', 'fhv_black_car', 'fhv_lux_limo'), industry :=
+                                         'fhv_traditional']
+
+
+# Summing, reformatting, ordering
+monthly_trips_ind_data <-
+  monthly_trips_ind_data %>% dplyr::group_by(year_month, industry) %>% dplyr::summarise(count_trips = sum(count_trips))
+
+monthly_trips_ind_data$count_trips <-
+  as.numeric(monthly_trips_ind_data$count_trips)
+
+monthly_trips_ind_data$year_month <-
+  lubridate::ymd(monthly_trips_ind_data$year_month)
+
+monthly_trips_ind_data <-
+  monthly_trips_ind_data %>% dplyr::arrange(year_month)
+
+
+# Pulling daily counts for high volumes from the warehouse
+monthly_trips_companies_data <- setDT(sqlQuery(
+  policy_con,
+  paste0(
+    "SELECT
+      DATEADD(MONTH, DATEDIFF(MONTH, 0, [metric_day]), 0) as year_month
+      ,[company] as industry
+      ,sum([count_pickups]) as count_trips
+  FROM [TLC_PLCPRG_PRD].[dbo].[submission_company_indicators_daily_trips]
+  where company in ('UBER','LYFT','JUNO','VIA') and [metric_day] <",
+  "'",
+  monthly_trips_year_mon,
+  "'",
+  " and [metric_day] >= '2019-02-01'
+  GROUP BY DATEADD(MONTH, DATEDIFF(MONTH, 0, [metric_day]), 0),[company]
+"
+  )
+))
+
+# Summing, reformatting, ordering
+monthly_trips_companies_data$industry <-
+  tolower(monthly_trips_companies_data$industry)
+monthly_trips_companies_data$year_month <-
+  lubridate::ymd(monthly_trips_companies_data$year_month)
+
+monthly_trips_companies_data <-
+  monthly_trips_companies_data %>% dplyr::arrange(year_month)
+
+
+monthly_trips_fhv_data$industry <-
+  tolower(monthly_trips_fhv_data$industry)
+monthly_trips_fhv_data$year_month <-
+  lubridate::ymd(monthly_trips_fhv_data$year_month)
+
+monthly_trips_fhv_data <-
+  monthly_trips_fhv_data %>% dplyr::arrange(year_month)
+
+
+# Creating dates for future m-m and yoy comparisons
+date1 <- max(monthly_trips_ind_data$year_month)
+date2 <- date1 %m-% months(1)
+date3 <- date1 %m-% months(12)
+
+date_fhv1 <- max(monthly_trips_fhv_data$year_month)
+date_fhv2 <- date_fhv1 %m-% months(1)
+date_fhv3 <- date_fhv1 %m-% months(12)
+
+
+# Filtering and summarizing trip numbers to feed them into valueboxes
+fhv_filtered <-
+  monthly_trips_fhv_data %>% dplyr::filter(year_month %in% c(date_fhv1, date_fhv2, date_fhv3))
+
+industries_filtered <-
+  monthly_trips_ind_data %>% dplyr::filter(year_month %in% c(date1, date2, date3))
+
+industries_filtered_fhv <-
+  monthly_trips_ind_data %>% dplyr::filter(industry == 'fhv_traditional',
+                                           year_month %in% c(date_fhv1, date_fhv2, date_fhv3))
+
+companies_filtered <-
+  monthly_trips_companies_data %>% dplyr::filter(year_month %in% c(date1, date2, date3))
+
+total_filtered <- industries_filtered %>%
+  dplyr::filter(!industry == 'fhv_traditional') %>%
+  dplyr::group_by(year_month) %>%
+  dplyr::summarise(count_trips = sum(count_trips))
+total_filtered$Metrics <- 'total trips'
+colnames(total_filtered) <- c('year_mon', 'value', 'Metrics')
+total_filtered <-
+  total_filtered %>% dplyr::select(year_mon, Metrics, value)
+
+
+
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons Start --------------------------------
+valuebox_function <-
+  function(data,
+           industry_name,
+           box_name,
+           icon_name,
+           box_color) {
+    # data ex data = industries_filtered, industry = 'yellow'
+    yellow_now <-
+      data %>% dplyr::filter(industry == industry_name) %>% dplyr::arrange(year_month)
+    
+    
+    
+    if (yellow_now$count_trips[3] > yellow_now$count_trips[2]) {
+      month_to_month <- 'increase'
+    } else {
+      month_to_month <- 'decrease'
+    }
+    
+    if (yellow_now$count_trips[3] > yellow_now$count_trips[1]) {
+      year_to_year <- 'increase'
+    } else {
+      year_to_year <- 'decrease'
+    }
+    
+    
+    
+    capt1 <-
+      paste0(
+        "There were ",
+        span(format(yellow_now$count_trips[3], big.mark = ','), style = 'font-size:21px; font-weight:bold'),
+        
+        " trips in ",
+        format(yellow_now$year_month[3], "%B %Y"),
+        ", which is a ",
+        span(
+          paste0(abs(round(((yellow_now[2, 3] - yellow_now[3, 3]) / yellow_now[2, 3]) * 100, 1
+          )), "% ", month_to_month),
+          style = paste0(
+            "color:",
+            ifelse(month_to_month == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(ymd(yellow_now$year_month[2]), "%B %Y"),
+        " and ",
+        span(
+          paste0(abs(round(((yellow_now[1, 3] - yellow_now[3, 3]) / yellow_now[1, 3]) *
+                             100, 1
+          )), "% ", year_to_year),
+          style = paste0(
+            "color:",
+            ifelse(year_to_year == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(yellow_now$year_month[1], "%B %Y"),
+        "."
+      )
+    
+
+    return(valueBox(
+      box_name,
+      caption = capt1,
+      icon = icon_name,
+      color = box_color
+    ))
+    
+  }
+
+
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons End --------------------------------
+
+
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons Start --------------------------------
+
+valuebox_function_indicators_monthly <-
+  function(data,
+           industry_name,
+           box_name,
+           icon_name,
+           box_color,
+           metric) {
+    colnames(data)[1] <- 'year_month'
+    colnames(data)[2] <- 'company'
+    
+    if (industry_name %in% c('FHV',
+                             'FHV - Black Car',
+                             'FHV - High Volume',
+                             'FHV - Livery',
+                             'FHV - Lux Limo')) {
+      ind_date1_days <- days_in_month(ind_fhv_date1)
+      yellow_now <-
+        data %>% dplyr::filter(
+          company == industry_name,
+          year_month %in% c(ind_fhv_date1, ind_fhv_date2, ind_fhv_date3)
+        ) %>% dplyr::arrange(year_month)
+    } else {
+      ind_date1_days <- days_in_month(ind_date1)
+      yellow_now <-
+        data %>% dplyr::filter(company == industry_name,
+                               year_month %in% c(ind_date1, ind_date2, ind_date3)) %>% dplyr::arrange(year_month)
+    }
+    
+    
+    
+    if (yellow_now[[metric]][3] > yellow_now[[metric]][2]) {
+      month_to_month <- 'increase'
+    } else {
+      month_to_month <- 'decrease'
+    }
+    
+    if (yellow_now[[metric]][3] > yellow_now[[metric]][1]) {
+      year_to_year <- 'increase'
+    } else {
+      year_to_year <- 'decrease'
+    }
+    
+    
+    
+    capt1 <-
+      paste0(
+        "There were ",
+        span(format(
+          yellow_now[[metric]][3] * ind_date1_days, big.mark = ','
+        ), style = 'font-size:21px; font-weight:bold'),
+        " trips in ",
+        format(yellow_now$year_month[3], "%B %Y"),
+        ", which is a ",
+        span(
+          paste0(abs(round(((yellow_now[[metric]][3] - yellow_now[[metric]][2]) /
+                              yellow_now[[metric]][2]) * 100, 1
+          )), "% ", month_to_month),
+          style = paste0(
+            "color:",
+            ifelse(month_to_month == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(ymd(yellow_now$year_month[2]), "%B %Y"),
+        " and ",
+        span(
+          paste0(abs(round(((yellow_now[[metric]][3] - yellow_now[[metric]][1]) /
+                              yellow_now[[metric]][1]) * 100, 1
+          )), "% ", year_to_year),
+          style = paste0(
+            "color:",
+            ifelse(year_to_year == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(yellow_now$year_month[1], "%B %Y"),
+        ".",
+        ifelse(
+          industry_name == 'FHV',
+          " NOTE: FHV includes Black Cars, Liveries, and Luxury Limos (see below)",
+          ""
+        )
+      )
+    
+
+    return(valueBox(
+      box_name,
+      caption = capt1,
+      icon = icon_name,
+      color = box_color
+    ))
+    
+  }
+
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons End --------------------------------
+
+
+
+
+# Industry Indicators----------------------------------------------------------------------
+
+# Connecting to the Open Data DB
+con <- dbConnect(
+  odbc(),
+  Driver = "SQL Server",
+  Server = "TLCV-OPENDATA",
+  Database = "OPENDATA",
+  Trusted_Connection = "True"
+)
+
+
+
+# Pulling base afiliations 
+tripsMonth <-
+  sqlQuery(policy_con,
+           "select lic_no, company, lic_class from fhv_base_list")
+
+
+
+tripsMonth <- setDT(tripsMonth)
+
+# Eliminating Dups and renaming
+bases <- tripsMonth[!duplicated(tripsMonth[, 'lic_no']), ]
+colnames(bases)[1] <- 'Base_Number'
+
+
+
+# Pulling fhv trip aggregates from open data
+test <-
+  dbGetQuery(con,
+             "select * from OD_FHV_Aggregate_Monthly_Report_preview where year >= 2019")
+
+
+# Reshaping and selecting needed data
+setDT(test)
+test$Base_Number = toupper(test$Base_Number)
+test$year_month = paste(as.character(test$Year), test$Month_Name, "01", sep = '-')
+test$year_month <- ymd(test$year_month)
+
+test1 <-
+  setDT(test)[, c(
+    'year_month',
+    'Base_Number',
+    'Total_Dispatched_Trips',
+    'Total_Dispatched_Shared_Trips',
+    'Unique_Dispatched_Vehicles'
+  )]
+
+
+# Generating dates for future comparisons
+now <- max(test1$year_month)
+one_month_ago = now - months(1)
+one_year_ago = now - months(12)
+
+
+
+
+# Joining aggs with bases and renaming values
+
+aggs1 <- left_join(test1, bases, by = 'Base_Number')
+
+aggs1 <-
+  setDT(aggs1)[Base_Number %in% c('UBER', 'LYFT', 'VIA', 'JUNO'), lic_class :=
+                 'APP']
+aggs1 <-
+  setDT(aggs1)[lic_class == 'APP', lic_class := 'FHV - High Volume']
+aggs1 <-
+  setDT(aggs1)[lic_class == 'BK', lic_class := 'FHV - Black Car']
+aggs1 <-
+  setDT(aggs1)[lic_class == 'LX', lic_class := 'FHV - Lux Limo']
+aggs1 <- setDT(aggs1)[lic_class == 'LV', lic_class := 'FHV - Livery']
+
+stat <-
+  aggs1 %>% dplyr::group_by(year_month, lic_class) %>% dplyr::count()
+
+
+
+stat <- setDT(stat)[!is.na(stat$lic_class), ]
+
+stat$year_month <- ymd(stat$year_month)
+
+base_date1 <- max(stat$year_month)
+base_date2 <- base_date1 %m-% months(1)
+base_date3 <- base_date1 %m-% months(12)
+
+stat_this_month <-
+  stat %>% dplyr::filter(year_month %in% c(base_date1, base_date2, base_date3))
+
+
+
+# We either pull from Git or locally (depends on whether we are previewing or posing the dashboard)
+#industry_indicators_data <- fread('https://www1.nyc.gov/assets/tlc/downloads/csv/data_reports_monthly.csv')
+
+industry_indicators_data <-
+  fread('data/data_reports_monthly_09_28_2022.csv')
+
+
+# We need to recalculate the metrics based on each industry weight. Start -----------------------
+industry_indicators_data$weight <- 1
+industry_indicators_data$`Month/Year` <-
+  lubridate::ymd(paste0(industry_indicators_data$`Month/Year`, '-01'))
+setDT(industry_indicators_data)
+industry_indicators_data <-
+  setDT(industry_indicators_data)[`License Class` == 'FHV - High Volume', `License Class` := 'HVFHV']
+industry_indicators_data <-
+  setDT(industry_indicators_data)[`License Class` == 'FHV - Black Car', weight := 0.32]
+industry_indicators_data <-
+  setDT(industry_indicators_data)[`License Class` == 'FHV - Livery', weight := 0.65]
+industry_indicators_data <-
+  setDT(industry_indicators_data)[`License Class` == 'FHV - Lux Limo', weight := 0.03]
+
+industry_indicators_data <-
+  setDT(industry_indicators_data)[`License Class` == 'FHV - Black Car', `License Class` := 'FHV']
+industry_indicators_data <-
+  setDT(industry_indicators_data)[`License Class` == 'FHV - Livery', `License Class` := 'FHV']
+industry_indicators_data <-
+  setDT(industry_indicators_data)[`License Class` == 'FHV - Lux Limo', `License Class` := 'FHV']
+
+industry_indicators_data$`Trips Per Day` <-
+  as.numeric(gsub(",", "", industry_indicators_data$`Trips Per Day`))
+
+industry_indicators_data$`Unique Drivers` <-
+  as.numeric(gsub(",", "", industry_indicators_data$`Unique Drivers`))
+
+industry_indicators_data$`Unique Vehicles` <-
+  as.numeric(gsub(",", "", industry_indicators_data$`Unique Vehicles`))
+
+#industry_indicators_data$`Avg Minutes per Trip` <- as.numeric( industry_indicators_data$`Avg Minutes per Trip`)
+industry_indicators_data$`Avg Minutes Per Trip` <-
+  as.numeric(gsub(",", "", industry_indicators_data$`Avg Minutes Per Trip`))
+
+industry_indicators_data$`Percent of Trips Paid with Credit Card` <-
+  as.numeric(gsub(
+    "%",
+    "",
+    industry_indicators_data$`Percent of Trips Paid with Credit Card`
+  ))
+industry_indicators_data$`Trips Per Day Shared` <-
+  as.numeric(gsub(",", "", industry_indicators_data$`Trips Per Day Shared`))
+
+
+
+industry_indicators_data_fhv <-
+  industry_indicators_data %>%
+  dplyr::filter(`License Class` == 'FHV') %>%
+  dplyr::group_by(`Month/Year`, `License Class`) %>%
+  dplyr::summarise(
+    trips = sum(`Trips Per Day`),
+    unique_drivers = sum(`Unique Drivers`),
+    unique_vehicles = sum(`Unique Vehicles`),
+    avg_days_veh_on_road = sum(`Avg Days Vehicles on Road` *
+                                 weight),
+    avg_hours_per_day_veh = sum(`Avg Hours Per Day Per Vehicle` *
+                                  weight),
+    avg_mins_trip = sum(`Avg Minutes Per Trip` * weight),
+    credit_card = sum(`Percent of Trips Paid with Credit Card`),
+    shared_trips = sum(`Trips Per Day Shared`)
+  )
+
+# We need to recalculate the metrics based on each industry weight. End -----------------------
+
+
+# Calculating the same metrics for non trad fhvs (no need for weights here) Start -----------------------
+industry_indicators_data_fhv$`Month/Year` <-
+  ymd(industry_indicators_data_fhv$`Month/Year`)
+
+ind_fhv_date1 <- max(industry_indicators_data_fhv$`Month/Year`)
+ind_fhv_date2 <- ind_fhv_date1 %m-% months(1)
+ind_fhv_date3 <- ind_fhv_date1 %m-% months(12)
+
+industry_indicators_data_fhv_this_month <-
+  industry_indicators_data_fhv %>% dplyr::filter(`Month/Year` %in% c(ind_fhv_date1, ind_fhv_date2, ind_fhv_date3))
+
+
+
+
+industry_indicators_data <-
+  industry_indicators_data %>%
+  dplyr::filter(`License Class` != 'FHV') %>%
+  dplyr::select(
+    `Month/Year`,
+    `License Class`,
+    trips = `Trips Per Day`,
+    unique_drivers = `Unique Drivers`,
+    unique_vehicles = `Unique Vehicles`,
+    avg_days_veh_on_road = `Avg Days Vehicles on Road`,
+    avg_hours_per_day_veh = `Avg Hours Per Day Per Vehicle`,
+    avg_mins_trip = `Avg Minutes Per Trip`,
+    credit_card = `Percent of Trips Paid with Credit Card`,
+    shared_trips = `Trips Per Day Shared`
+  ) %>% dplyr::bind_rows(industry_indicators_data_fhv) %>% dplyr::arrange(`Month/Year`, `License Class`)
+
+industry_indicators_data$`Month/Year` <-
+  ymd(industry_indicators_data$`Month/Year`)
+
+ind_date1 <- max(industry_indicators_data$`Month/Year`)
+ind_date2 <- ind_date1 %m-% months(1)
+ind_date3 <- ind_date1 %m-% months(12)
+
+industry_indicators_data_this_month <-
+  industry_indicators_data %>% dplyr::filter(`Month/Year` %in% c(ind_date1, ind_date2, ind_date3))
+
+industry_indicators_data_this_month_all <-
+  industry_indicators_data %>% dplyr::filter(`Month/Year` %in% c(ind_date1, ind_date2, ind_date3),
+                                             `License Class` != 'FHV') %>% dplyr::select(1, 3, 4, 5) %>% dplyr::group_by(`Month/Year`) %>% dplyr::summarise(
+                                               trips = sum(trips),
+                                               unique_drivers = sum(unique_drivers),
+                                               uniqie_vehicles = sum(unique_vehicles)
+                                             )
+
+# Calculating the same metrics for non trad fhvs (no need for weights here) End -----------------------
+
+
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons Start --------------------------------
+
+valuebox_function_indicators <-
+  function(data,
+           industry_name,
+           box_name,
+           icon_name,
+           box_color,
+           metric) {
+    # data ex data = industries_filtered, industry = 'yellow'
+    colnames(data)[1] <- 'year_month'
+    colnames(data)[2] <- 'company'
+    
+    if (industry_name %in% c('FHV',
+                             'FHV - Black Car',
+                             'FHV - High Volume',
+                             'FHV - Livery',
+                             'FHV - Lux Limo')) {
+      yellow_now <-
+        data %>% dplyr::filter(
+          company == industry_name,
+          year_month %in% c(ind_fhv_date1, ind_fhv_date2, ind_fhv_date3)
+        ) %>% dplyr::arrange(year_month)
+    } else {
+      yellow_now <-
+        data %>% dplyr::filter(company == industry_name,
+                               year_month %in% c(ind_date1, ind_date2, ind_date3)) %>% dplyr::arrange(year_month)
+    }
+    
+    
+    
+    if (yellow_now[[metric]][3] > yellow_now[[metric]][2]) {
+      month_to_month <- 'increase'
+    } else {
+      month_to_month <- 'decrease'
+    }
+    
+    if (yellow_now[[metric]][3] > yellow_now[[metric]][1]) {
+      year_to_year <- 'increase'
+    } else {
+      year_to_year <- 'decrease'
+    }
+    
+    if (metric == 'unique_drivers') {
+      sign = 'Drivers'
+    } else if (metric == 'unique_vehicles') {
+      sign = 'Vehicles'
+    } else if (metric == 'avg_days_veh_on_road') {
+      sign = 'Days'
+    } else if (metric == 'avg_hours_per_day_veh') {
+      sign = 'Hours'
+    } else if (metric == 'avg_mins_trip') {
+      sign = 'Minutes'
+    } else if (metric == 'credit_card') {
+      sign = '%'
+    }
+    
+    
+    
+    
+    capt1 <-
+      paste0(
+        span(paste0(format(
+          round(yellow_now[[metric]][3], 1), big.mark = ','
+        ), " ", sign), style = 'font-size:21px; font-weight:bold'),
+        " in ",
+        format(yellow_now$year_month[3], "%B %Y"),
+        ", which is a ",
+        span(
+          paste0(abs(round(((yellow_now[[metric]][3] - yellow_now[[metric]][2]) /
+                              yellow_now[[metric]][2]) * 100, 1
+          )), "% ", month_to_month),
+          style = paste0(
+            "color:",
+            ifelse(month_to_month == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(ymd(yellow_now$year_month[2]), "%B %Y"),
+        " and ",
+        span(
+          paste0(abs(round(((yellow_now[[metric]][3] - yellow_now[[metric]][1]) /
+                              yellow_now[[metric]][1]) * 100, 1
+          )), "% ", year_to_year),
+          style = paste0(
+            "color:",
+            ifelse(year_to_year == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(yellow_now$year_month[1], "%B %Y"),
+        "."
+      )
+    
+    
+    
+    
+    # box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
+    return(valueBox(
+      box_name,
+      caption = capt1,
+      icon = icon_name,
+      color = box_color
+    ))
+    
+  }
+
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons End --------------------------------
+
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons Start --------------------------------
+
+valuebox_function_indicators_base <-
+  function(data,
+           industry_name,
+           box_name,
+           icon_name,
+           box_color,
+           metric) {
+    # data ex data = industries_filtered, industry = 'yellow'
+    colnames(data)[1] <- 'year_month'
+    colnames(data)[2] <- 'company'
+    
+    
+    
+    yellow_now <-
+      data %>% dplyr::filter(company == industry_name,
+                             year_month %in% c(base_date1, base_date2, base_date3)) %>% dplyr::arrange(year_month)
+    
+    
+    
+    
+    
+    if (yellow_now[[metric]][3] > yellow_now[[metric]][2]) {
+      month_to_month <- 'increase'
+    } else {
+      month_to_month <- 'decrease'
+    }
+    
+    if (yellow_now[[metric]][3] > yellow_now[[metric]][1]) {
+      year_to_year <- 'increase'
+    } else {
+      year_to_year <- 'decrease'
+    }
+    
+    
+    
+    capt1 <-
+      paste0(
+        "There were ",
+        span(format(yellow_now[[metric]][3], big.mark = ','), style = 'font-size:21px; font-weight:bold'),
+        " active bases in ",
+        format(yellow_now$year_month[3], "%B %Y"),
+        ", which is a ",
+        span(
+          paste0(abs(round(((yellow_now[[metric]][3] - yellow_now[[metric]][2]) /
+                              yellow_now[[metric]][2]) * 100, 1
+          )), "% ", month_to_month),
+          style = paste0(
+            "color:",
+            ifelse(month_to_month == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(ymd(yellow_now$year_month[2]), "%B %Y"),
+        " and ",
+        span(
+          paste0(abs(round(((yellow_now[[metric]][3] - yellow_now[[metric]][1]) /
+                              yellow_now[[metric]][1]) * 100, 1
+          )), "% ", year_to_year),
+          style = paste0(
+            "color:",
+            ifelse(year_to_year == 'increase', '#05b705', '#ff5520'),
+            ";font-size:19px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(yellow_now$year_month[1], "%B %Y"),
+        "."
+      )
+    
+    
+    
+    
+    # box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
+    return(valueBox(
+      box_name,
+      caption = capt1,
+      icon = icon_name,
+      color = box_color
+    ))
+    
+  }
+
+
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons End--------------------------------
+
+
+##HV Utilization----------------------------------------------------------------------
+
+average_weekly_utilization <- setDT(sqlQuery(policy_con,
+paste0("SELECT 
+      DATEADD(MONTH, DATEDIFF(MONTH, 0, [metric_week]), 0) as year_month
+      ,[company]
+      ,avg([sum_cruising_seconds]/3600) as avg_hours_cruising
+      ,avg([sum_passenger_seconds]/3600) as avg_hours_with_passenger
+      ,round(avg([pct_utilization]) * 100,1) as avg_utilization
+  FROM [TLC_PLCPRG_PRD].[dbo].[company_indicators_weekly_utilization_even]
+  where [metric_week] < ","'",monthly_trips_year_mon,"'", "
+  group by DATEADD(MONTH, DATEDIFF(MONTH, 0, [metric_week]), 0),[company]
+")))
+average_weekly_utilization$year_month <- ymd(average_weekly_utilization$year_month)
+
+date_utilization1 <- max(average_weekly_utilization$year_month)
+date_utilization2 <- date_utilization1 %m-% months(1)
+date_utilization3 <- date_utilization1 %m-% months(12)
+
+total_weekly_utilization <- average_weekly_utilization %>% dplyr::filter(year_month %in% c(date_utilization1,date_utilization2,date_utilization3)) %>% dplyr::group_by(year_month) %>% dplyr::summarise(avg_utilization = mean(avg_utilization, na.rm=TRUE )) %>% dplyr::arrange(year_month)
+
+total_weekly_utilization$Metrics <- 'percent on average'
+colnames(total_weekly_utilization) <- c('year_mon', 'value','Metrics' )
+total_weekly_utilization <- total_weekly_utilization %>% dplyr::select(year_mon, Metrics, value)
+
+
+valuebox_function_utilization <- function(data,industry_name, box_name, icon_name, box_color ){
+# data ex data = industries_filtered, industry = 'yellow'  
+  yellow_now <- data %>% dplyr::filter(company == industry_name, year_month %in% c(date_utilization1,date_utilization2,date_utilization3)) %>% dplyr::arrange(year_month)
+  
+
+
+if(yellow_now$avg_utilization[3] > yellow_now$avg_utilization[2]){
+  month_to_month <- 'increase'
+} else {
+  month_to_month <- 'decrease'
+}
+
+if(yellow_now$avg_utilization[3] > yellow_now$avg_utilization[1]){
+  year_to_year <- 'increase'
+} else {
+  year_to_year <- 'decrease'
+}
+  
+
+  
+capt1 <- paste0("Utilization rate was at ",span(format(yellow_now$avg_utilization[3], big.mark = ','),style = 'font-size:21px; font-weight:bold'),"% in ",format(yellow_now$year_month[3],"%B %Y"),", which is a ",span(paste0(abs(round(((yellow_now$avg_utilization[3] - yellow_now$avg_utilization[2])/yellow_now$avg_utilization[2]) * 100, 1)),"% ",month_to_month), style=paste0("color:",ifelse(month_to_month == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_month[2]),"%B %Y")," and ",span(paste0(abs(round(((yellow_now$avg_utilization[3] - yellow_now$avg_utilization[1])/yellow_now$avg_utilization[1])*100,1)),"% ",year_to_year), style=paste0("color:",ifelse(year_to_year == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_month[1],"%B %Y"),".")
+
+
+
+
+# box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
+return(valueBox(box_name, caption = capt1, icon=icon_name, color = box_color))
+  
+}
+
+
+##HV waittimes----------------------------------------------------------------------
+
+
+# Loading the shapefile three times into different variables
+ourShape201901 <- raster::shapefile('data/shape/taxi_zones.shp')
+ourShape201902 <- raster::shapefile('data/shape/taxi_zones.shp')
+ourShape201903 <- raster::shapefile('data/shape/taxi_zones.shp')
+
+average_waittime <- setDT(sqlQuery(policy_con,
+paste0("SELECT 
+     
+      [metric_month]
+      ,[industry]
+      ,[zone]
+ 
+      ,round([avg_wait_time]/60,1) as avg_wait_time
+
+  FROM [TLC_PLCPRG_PRD].[dbo].[industry_zone_indicators_monthly_wait_time]
+  where [metric_month] < ","'",monthly_trips_year_mon,"'", "
+  order by [metric_month]
+")))
+
+average_waittime$metric_month <- ymd(average_waittime$metric_month)
+
+
+date_waittime1 <- max(average_waittime$metric_month)
+date_waittime2 <- date_waittime1 %m-% months(1)
+date_waittime3 <- date_waittime1 %m-% months(12)
+
+average_waittime_this_month <- average_waittime %>% dplyr::filter(metric_month == date_waittime1)
+average_waittime_last_month <- average_waittime %>% dplyr::filter(metric_month == date_waittime2)
+average_waittime_last_year <- average_waittime %>% dplyr::filter(metric_month == date_waittime3)
+
+average_waittime_all <- average_waittime %>% dplyr::group_by(metric_month, industry) %>% dplyr::summarise(avg_wait_time = mean(avg_wait_time))
+
+average_waittime_overview <- average_waittime_all
+
+average_waittime_overview$industry <- 'minutes'
+colnames(average_waittime_overview) <- c('year_mon', 'Metrics','value' )
+average_waittime_overview <- average_waittime_overview %>% dplyr::select(year_mon, Metrics, value)
+
+
+
+colnames(average_waittime_this_month)[3] <- 'LocationID'
+colnames(average_waittime_last_month)[3] <- 'LocationID'
+colnames(average_waittime_last_year)[3] <- 'LocationID'
+
+
+ourShape201901@data <- left_join(ourShape201901@data, average_waittime_this_month)
+ourShape201902@data <- left_join(ourShape201902@data, average_waittime_last_month)
+ourShape201903@data <- left_join(ourShape201903@data, average_waittime_last_year)
+
+
+
+pal <- colorNumeric(palette = "YlOrRd", domain=range(2,14))
+
+
+##HV locs----------------------------------------------------------------------
+
+# Loading the shapefile three times into different variables
+ourShapeBoro <- raster::shapefile('data/shape/BoroughBoundaries.shp')
+ourShapeBoro_all <- raster::shapefile('data/shape/BoroughBoundaries.shp')
+ourShapeBoro_hv <- raster::shapefile('data/shape/BoroughBoundaries.shp')
+ourShapeBoro_med <- raster::shapefile('data/shape/BoroughBoundaries.shp')
+ourShapeBoro_shl <- raster::shapefile('data/shape/BoroughBoundaries.shp')
+
+centers <- data.frame(gCentroid(ourShapeBoro, byid = TRUE))
+centers$boro_name <- ourShapeBoro$boro_name
+
+trips_by_borough <- setDT(sqlQuery(policy_con,paste0(
+"SELECT 
+      [metric_month]
+      ,[industry]
+      ,trips.[zone]
+
+      ,[borough]
+      ,[count_pickups]
+   
+  FROM [TLC_PLCPRG_PRD].[dbo].[industry_zone_indicators_monthly_pickups] trips
+  
+  inner join geography_lookup_zone loc
+  ON trips.zone = loc.locationid
+  where [industry] in ('fhv_high_volume', 'yellow','green') and [metric_month] < ","'",monthly_trips_year_mon,"'", "
+")))
+
+trips_by_borough$metric_month <- ymd(trips_by_borough$metric_month)
+
+trips_by_borough <- trips_by_borough %>% dplyr::group_by(metric_month, industry, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups))
+
+date_by_borough <- max(trips_by_borough$metric_month)
+date_by_borough2 <- date_by_borough %m-% months(1)
+date_by_borough3 <- date_by_borough %m-% months(12)
+
+trips_by_borough_all <- trips_by_borough %>% dplyr::filter(metric_month %in% c(date_by_borough,date_by_borough2,date_by_borough3)) %>% dplyr::group_by(metric_month, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups))
+
+trips_by_borough_all <- spread(trips_by_borough_all,metric_month,count_pickups)
+
+trips_by_borough_hv <- trips_by_borough %>% dplyr::filter(metric_month %in% c(date_by_borough,date_by_borough2,date_by_borough3), industry == 'fhv_high_volume') %>% dplyr::group_by(metric_month, industry, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups)) %>% spread(metric_month,count_pickups)
+
+trips_by_borough_med <- trips_by_borough %>% dplyr::filter(metric_month %in% c(date_by_borough,date_by_borough2,date_by_borough3), industry == 'yellow') %>% dplyr::group_by(metric_month, industry, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups)) %>% spread(metric_month,count_pickups)
+
+trips_by_borough_shl <- trips_by_borough %>% dplyr::filter(metric_month %in% c(date_by_borough,date_by_borough2,date_by_borough3), industry == 'green') %>% dplyr::group_by(metric_month, industry, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups)) %>% spread(metric_month,count_pickups)
+
+
+colnames(trips_by_borough_all) <- c('boro_name', 'last_year','last_month','this_month')
+colnames(trips_by_borough_hv) <- c('industry','boro_name', 'last_year','last_month','this_month')
+colnames(trips_by_borough_med) <- c('industry','boro_name', 'last_year','last_month','this_month')
+colnames(trips_by_borough_shl) <- c('industry','boro_name', 'last_year','last_month','this_month')
+###############################################################
+
+
+valuebox_function_boro <- function(data, box_name, icon_name, box_color,intro ){
+  # data ex data = industries_filtered, industry = 'yellow'  
+  test <- data
+  test$mom <- test$this_month - test$last_month
+  test$yoy <- test$this_month - test$last_year
+  test <- setDT(test)[mom > 0, mom_change := 'increase']
+  test <- setDT(test)[mom < 0, mom_change := 'decrease']
+  test <- setDT(test)[yoy > 0, yoy_change := 'increase']
+  test <- setDT(test)[yoy < 0, yoy_change := 'decrease']
+  
+ 
+  
+  captionn <- function(boro){dd <- paste0(br(),"There were ",span(format(boro$this_month, big.mark = ','),style = 'font-size:21px; font-weight:bold')," trips in ",boro$boro_name," in ",format(date_by_borough,"%B %Y")
+                                           ,", which is a ",span(paste0(abs(round(((boro$this_month - boro$last_month)/boro$last_month) * 100, 1)),"% ",boro$mom_change), style=paste0("color:",ifelse(boro$mom_change == 'increase','#05b705','#ff5520'),";font-size:23px; font-weight:bold" ))," compared to ",format(ymd(date_by_borough2),"%B %Y")," and ",span(paste0(abs(round(((boro$this_month - boro$last_year)/boro$last_year)*100,1)),"% ",boro$yoy_change), style=paste0("color:",ifelse(boro$yoy_change == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(date_by_borough3,"%B %Y")
+                                           ,"."
+  )
+    return(dd)
+
+  }
+  
+  
+  one <- captionn(test[1,])
+  two <- captionn(test[2,])
+  three <- captionn(test[3,])
+  four <- captionn(test[4,])
+  five <- captionn(test[5,])
+  
+                  
+
+  caption_fin <- paste0(intro, one,two,three,four,five)
+  # 
+  
+  # 
+  # 
+  # 
+  # # box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
+   return(valueBox(box_name, caption = caption_fin, icon=icon_name, color = box_color))
+  
+}
+
+
+####################################################################################
+
+
+
+
+
+ourShapeBoro_all@data <- left_join(ourShapeBoro@data, trips_by_borough_all)
+ourShapeBoro_hv@data <- left_join(ourShapeBoro@data, trips_by_borough_hv)
+ourShapeBoro_med@data <- left_join(ourShapeBoro@data, trips_by_borough_med)
+ourShapeBoro_shl@data <- left_join(ourShapeBoro@data, trips_by_borough_shl)
+
+centers_all <- left_join(centers ,ourShapeBoro_all@data)
+centers_all <- centers_all %>% dplyr::mutate(mom_change = round((this_month -last_month)/last_month,2), yoy_change = round((this_month - last_year )/last_year,2), this_month = round(this_month,2))
+
+centers_hv <- left_join(centers ,ourShapeBoro_hv@data)
+centers_hv <- centers_hv %>% dplyr::mutate(mom_change = round((this_month - last_month)/last_month,2), yoy_change = round((this_month - last_year)/last_year,2), this_month = round(this_month,2))
+
+centers_med <- left_join(centers ,ourShapeBoro_med@data)
+centers_med <- centers_med %>% dplyr::mutate(mom_change = round((this_month - last_month)/last_month,2), yoy_change = round((this_month - last_year)/last_year,2), this_month = round(this_month,2))
+
+centers_shl <- left_join(centers ,ourShapeBoro_shl@data)
+centers_shl <- centers_shl %>% dplyr::mutate(mom_change = round((this_month - last_month)/last_month,2), yoy_change = round((this_month - last_year)/last_year,2), this_month = round(this_month,2))
+
+
+
+pal_trips_all <- colorNumeric(palette = "GnBu", domain=ourShapeBoro_all@data$this_month)
+pal_trips_hv <- colorNumeric(palette = "GnBu", domain=ourShapeBoro_hv@data$this_month)
+pal_trips_med <- colorNumeric(palette = "GnBu", domain=ourShapeBoro_med@data$this_month)
+pal_trips_shl <- colorNumeric(palette = "GnBu", domain=ourShapeBoro_shl@data$this_month)
+
+
+##HV locs----------------------------------------------------------------------
+
+
+data_exl <- read_excel("data/local_law_31.xlsx")
+data_exl <- data_exl[-c(1:4),-c(2:19)]
+library(janitor)
+data_exl <- data_exl %>%
+  row_to_names(row_number = 1)
+
+data_exl <- data_exl[-c(1,3, 12,14,16,25,27,29,38,40,42,51,53,54),]
+colnames(data_exl)[1] <- 'category'
+
+data_exl <- data_exl[-c(10,20,30,40),]
+crashes_data <- data.table::melt(setDT(data_exl), id.vars = "category", variable.name = "year_mon")
+crashes_data$year_mon <- lubridate::my(crashes_data$year_mon)
+
+
+
+## Crashes-------------------------------------------------------------
+# myfile <- tempfile()
+#   download.file(
+#     "https://www1.nyc.gov/assets/tlc/downloads/excel/local_law_31.xlsx",
+#     myfile,
+#     mode = "wb"
+#   )
+# 
+# 
+# data_exl <- read_excel(myfile)
+data_exl <- read_excel("data/local_law_31.xlsx")
+data_exl <- data_exl[-c(1:4),-c(2:19)]
+
+data_exl <- data_exl %>%
+  row_to_names(row_number = 1)
+
+data_exl <- data_exl[-c(1,3, 12,14,16,25,27,29,38,40,42,51,53,54),]
+colnames(data_exl)[1] <- 'category'
+
+data_totals <- data_exl[c(10,20,30,40),]
+data_totals$category[1] <- 'total crashes'
+data_totals$category[2] <- 'total injuries'
+data_totals$category[3] <- 'total critical injuries'
+data_totals$category[4] <- 'total fatalities'
+
+
+data_totals <- data.table::melt(setDT(data_totals), id.vars = "category", variable.name = "year_mon")
+data_totals$year_mon <- lubridate::my(data_totals$year_mon)
+data_totals$value <- as.numeric(data_totals$value)
+#data_totals <- data_totals[data_totals$year_mon < monthly_trips_year_mon,]
+crash_date1 <- max(data_totals$year_mon, na.rm=T)
+crash_date2 <- crash_date1 %m-% months(1)
+crash_date3 <- crash_date1 %m-% months(12)
+
+  
+
+valuebox_function_crashes <- function(data,industry_name, box_name, icon_name, box_color ){
+# data ex data = industries_filtered, industry = 'yellow'  
+  yellow_now <- data %>% dplyr::filter(category == industry_name, year_mon %in% c(crash_date1,crash_date2,crash_date3)) %>% dplyr::arrange(year_mon)
+
+if(yellow_now$value[3] == yellow_now$value[2]) {
+  month_to_month <- 'change'
+}
+  
+  else if(yellow_now$value[3] > yellow_now$value[2]){
+  month_to_month <- 'increase'
+} else if(yellow_now$value[3] < yellow_now$value[2]) {
+  month_to_month <- 'decrease'
+}
+
+  if(yellow_now$value[3] == yellow_now$value[1]) {
+    year_to_year <- 'change'
+  }
+else if(yellow_now$value[3] > yellow_now$value[1]){
+  year_to_year <- 'increase'
+} else if(yellow_now$value[3] < yellow_now$value[1]){
+  year_to_year <- 'decrease'
+}
+  
+
+  
+captionn <- paste0("There were ",span(format(yellow_now$value[3], big.mark = ','),style = 'font-size:21px; font-weight:bold')," ",industry_name," in ",format(yellow_now$year_mon[3],"%B %Y"),", which is a ",span(paste0(abs(round((ifelse(yellow_now$value[2] == 0,(yellow_now$value[3] - yellow_now$value[2]),(yellow_now$value[3] - yellow_now$value[2])/yellow_now$value[2])) * 100, 1)),"% ",month_to_month), style=paste0("color:",ifelse(month_to_month == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_mon[2]),"%B %Y")," and ",span(paste0(abs(round((ifelse(yellow_now$value[1] == 0, (yellow_now$value[3] - yellow_now$value[1]), (yellow_now$value[3] - yellow_now$value[1])/yellow_now$value[1]))*100,1)),"% ",year_to_year), style=paste0("color:",ifelse(year_to_year == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_mon[1],"%B %Y"),".")
+
+
+
+
+# box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
+return(valueBox(box_name, caption = captionn, icon=icon_name, color = box_color))
+  
+}
+
+
+
+
+
+
+data_exl <- data_exl[-c(10,20,30,40),]
+
+#industry_indicators_data_veh <- fread('https://www1.nyc.gov/assets/tlc/downloads/csv/data_reports_monthly.csv')
+
+
+industry_indicators_data_veh <- fread('data/data_reports_monthly_09_28_2022.csv')
+
+vehs <- industry_indicators_data_veh[,c(1,2,6)]
+vehs$year_mon <- lubridate::ym(vehs$`Month/Year`)
+vehs <- setDT(vehs)[`License Class` == 'Yellow', 
+                    lic_no:='medallion'][`License Class` == 'FHV - High Volume',
+                                         lic_no:='fhv'][`License Class` == 'Green',
+                                                        lic_no:='shl'][`License Class` == 'FHV - Black Car',
+                                                                       lic_no:='fhv'][`License Class` == 'FHV - Livery',
+                                                                                      lic_no:='fhv'][`License Class` == 'FHV - Lux Limo',
+                                                                                                     lic_no:='fhv']
+vehs$`Unique Vehicles` <- as.numeric(gsub(",", "", vehs$`Unique Vehicles`))
+vehs <- vehs %>% dplyr::group_by(year_mon, lic_no) %>% dplyr::summarise(vehicles = sum(as.numeric(`Unique Vehicles`)))
+colnames(vehs)[2] <- 'category'
+
+
+filter_crashes = function(start, end, type){
+  
+
+  
+  all_crashes <- setDT(data_exl)[c(start:end),]
+  all_crashes$category <- c('total_crashes', 'medallion','shl','unknown','fhv','fhv','fhv','van','paratransit')
+  
+  all_crashes <- data.table::melt(setDT(all_crashes), id.vars = "category", variable.name = "year_mon")
+  all_crashes$year_mon <- lubridate::my(all_crashes$year_mon)
+  all_crashes <- all_crashes %>% dplyr::group_by(category,year_mon) %>% dplyr::summarise(total_crashes = sum(as.numeric(value))) %>% dplyr::left_join(vehs)
+  
+  all_crashes_known <- all_crashes %>% dplyr::filter(category %in% c('fhv', 'medallion', 'shl'))
+  
+  #all_crashes_known <- setDT(all_crashes_known)[category == 'van', vehicles:=170][category == 'paratransit', vehicles:=190]
+  
+  all_crashes_known$crash_per_100 <- (all_crashes_known$total_crashes/all_crashes_known$vehicles) * 10000
+  
+    if (type %in% c('fatal','critical')){
+      
+          all_crashes_known_total <- all_crashes_known %>% dplyr::group_by(year_mon) %>% dplyr::summarise(total_crashes = sum(total_crashes))
+  
+  all_crashes_known_average <- all_crashes_known %>% dplyr::filter(crash_per_100 > 0) %>% dplyr::group_by(category) %>% dplyr::summarise(crash_per_100 = round(mean(crash_per_100, ),1))
+  
+  return(list(all_crashes_known, all_crashes_known_average,all_crashes_known_total))
+    
+  } else {
+    
+ 
+  
+  all_crashes_known_average <- all_crashes_known %>% dplyr::filter(crash_per_100 > 0) %>% dplyr::group_by(category) %>% dplyr::summarise(crash_per_100 = round(mean(crash_per_100, ),1))
+  
+  return(list(all_crashes_known, all_crashes_known_average))
+  }
+}
+
+all_crashes = filter_crashes(1,9,'test')
+
+all_crashes_known <- all_crashes[[1]]
+
+all_crashes_known_average <- all_crashes[[2]]
+
+all_crashes = filter_crashes(10,18,'test')
+
+all_crashes_injuries <- all_crashes[[1]]
+
+all_crashes_injuries_average <- all_crashes[[2]]
+
+all_crashes = filter_crashes(19,27,'critical')
+
+all_crashes_critical <- all_crashes[[1]]
+all_crashes_critical <- all_crashes_critical[!is.na(all_crashes_critical$year_mon),]
+
+all_crashes_critical_average <- all_crashes[[2]]
+all_crashes_critical_total <- all_crashes[[3]]
+
+all_crashes = filter_crashes(28,36,'fatal')
+
+all_crashes_fatal <- all_crashes[[1]]
+all_crashes_fatal <- all_crashes_fatal[!is.na(all_crashes_fatal$year_mon),]
+
+all_crashes_fatal_average <- all_crashes[[2]]
+
+all_crashes_fatal_total <- all_crashes[[3]]
+
+
+## Crashes-------------------------------------------------------------
+
+
+
+vz_data <- read.csv('I:\\COF\\COF\\MMR\\Vision Zero Metrics\\Ops Metrics Tracker\\vision_zero_master/vz_data.csv')
+
+
+vz_data <- vz_data[-c(1,3,4,7:12, 23:26),-ncol(vz_data)]
+
+vz_data <- vz_data %>%
+  row_to_names(row_number = 1)
+
+
+vz_data$Metrics[1] <- 'total violations'
+vz_data$Metrics[2] <- 'completed_education'
+vz_data$Metrics[3] <- 'communication device'
+vz_data$Metrics[4] <- 'unsafe lane change'
+vz_data$Metrics[5] <- 'traffic signal'
+vz_data$Metrics[6] <- 'failing to yield right of way'
+vz_data$Metrics[7] <- 'speeding'
+vz_data$Metrics[8] <- 'stop sign'
+vz_data$Metrics[9] <- 'following too closely'
+vz_data$Metrics[10] <- 'improper passing'
+vz_data$Metrics[11] <- 'wrong direction'
+vz_data$Metrics[12] <- 'other'
+
+
+
+
+vz_data <- data.table::melt(setDT(vz_data), id.vars = "Metrics", variable.name = "year_mon")
+vz_data$year_mon <- lubridate::my(vz_data$year_mon)
+
+vz_data_ed <- vz_data[vz_data$Metrics == 'completed_education',]
+vz_data_total <- vz_data[vz_data$Metrics == 'total violations',]
+vz_data <- vz_data[!vz_data$Metrics %in% c('total violations','completed_education'),]
+
+
+vz_data_ed$value <- as.numeric(gsub(",", "", vz_data_ed$value))
+vz_data_total$value <- as.numeric(gsub(",", "", vz_data_total$value))
+vz_data$value <- as.numeric(gsub(",", "", vz_data$value))
+
+vz_date1 <- max(vz_data_total$year_mon)
+vz_date2 <- vz_date1 %m-% months(1)
+vz_date3 <- vz_date1 %m-% months(12)
+
+
+
+valuebox_function_vz <- function(data,industry_name, box_name, icon_name, box_color ){
+# data ex data = industries_filtered, industry = 'yellow'  
+  yellow_now <- data %>% dplyr::filter(Metrics == industry_name, year_mon %in% c(vz_date1,vz_date2,vz_date3)) %>% dplyr::arrange(year_mon)
+
+  if(yellow_now$value[3] == yellow_now$value[1]) {
+    month_to_month <- 'change'
+  }
+else if(yellow_now$value[3] > yellow_now$value[2]){
+  month_to_month <- 'increase'
+} else {
+  month_to_month <- 'decrease'
+}
+
+
+    if(yellow_now$value[3] == yellow_now$value[1]) {
+    year_to_year <- 'change'
+  }
+else if(yellow_now$value[3] > yellow_now$value[1]){
+  year_to_year <- 'increase'
+} else {
+  year_to_year <- 'decrease'
+}
+  
+
+  
+captionn <- paste0("There was (were) ",span(format(yellow_now$value[3], big.mark = ','),style = 'font-size:21px; font-weight:bold')," ",industry_name," violation(s) in ",format(yellow_now$year_mon[3],"%B %Y"),", which is a ",span(paste0(abs(round((ifelse(yellow_now$value[2] == 0,(yellow_now$value[3] - yellow_now$value[2]),(yellow_now$value[3] - yellow_now$value[2])/yellow_now$value[2])) * 100, 1)),"% ",month_to_month), style=paste0("color:",ifelse(month_to_month == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_mon[2]),"%B %Y")," and ",span(paste0(abs(round((ifelse(yellow_now$value[1] == 0, (yellow_now$value[3] - yellow_now$value[1]), (yellow_now$value[3] - yellow_now$value[1])/yellow_now$value[1]))*100,1)),"% ",year_to_year), style=paste0("color:",ifelse(year_to_year == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_mon[1],"%B %Y"),".")
+
+
+
+
+# box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
+return(valueBox(box_name, caption = captionn, icon=icon_name, color = box_color))
+  
+}
+
+
+
+
+
+
+
+#overview--------------------------------------------------------
+
+valuebox_function_overview <- function(data,industry_name, box_name, icon_name, box_color, date1,date2,date3,intro ){
+# data ex data = industries_filtered, industry = 'yellow'  
+  yellow_now <- data %>% dplyr::filter(Metrics == industry_name, year_mon %in% c(date1,date2,date3)) %>% dplyr::arrange(year_mon)
+
+if(yellow_now$value[3] > yellow_now$value[2]){
+  month_to_month <- 'increase'
+} else {
+  month_to_month <- 'decrease'
+}
+
+if(yellow_now$value[3] > yellow_now$value[1]){
+  year_to_year <- 'increase'
+} else {
+  year_to_year <- 'decrease'
+}
+  
+wt = 'The average wait time for HVFHV was '
+  
+captionn <- paste0(intro, br(),ifelse(box_name =="Wait Times",wt,''),span(format(round(yellow_now$value[3],1), big.mark = ','),style = 'font-size:21px; font-weight:bold')," ",industry_name," in ",format(yellow_now$year_mon[3],"%B %Y"),", which is a ",span(paste0(abs(round(((yellow_now$value[3] - yellow_now$value[2])/yellow_now$value[2]) * 100, 1)),"% ",month_to_month), style=paste0("color:",ifelse(month_to_month == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_mon[2]),"%B %Y")," and ",span(paste0(abs(round(((yellow_now$value[3] - yellow_now$value[1])/yellow_now$value[1])*100,1)),"% ",year_to_year), style=paste0("color:",ifelse(year_to_year == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_mon[1],"%B %Y"),".")
+
+
+
+
+# box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
+return(valueBox(box_name, caption = captionn, icon=icon_name, color = box_color))
+  
+}
+
+
+
+
+valuebox_function_crashes_overview <- function(data,industry_name, box_name, icon_name, box_color, intro ){
+# data ex data = industries_filtered, industry = 'yellow'  
+  yellow_now <- data %>% dplyr::filter(category == industry_name, year_mon %in% c(crash_date1,crash_date2,crash_date3)) %>% dplyr::arrange(year_mon)
+
+if(yellow_now$value[3] > yellow_now$value[2]){
+  month_to_month <- 'increase'
+} else {
+  month_to_month <- 'decrease'
+}
+
+if(yellow_now$value[3] > yellow_now$value[1]){
+  year_to_year <- 'increase'
+} else {
+  year_to_year <- 'decrease'
+}
+  
+
+  
+captionn <- paste0(intro, br(),"There were ",span(format(yellow_now$value[3], big.mark = ','),style = 'font-size:21px; font-weight:bold')," total crashes in ",format(yellow_now$year_mon[3],"%B %Y"),", which is a ",span(paste0(abs(round(((yellow_now$value[3] - yellow_now$value[2])/yellow_now$value[2]) * 100, 1)),"% ",month_to_month), style=paste0("color:",ifelse(month_to_month == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_mon[2]),"%B %Y")," and ",span(paste0(abs(round(((yellow_now$value[3] - yellow_now$value[1])/yellow_now$value[1])*100,1)),"% ",year_to_year), style=paste0("color:",ifelse(year_to_year == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_mon[1],"%B %Y"),".")
+
+
+
+
+# box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
+return(valueBox(box_name, caption = captionn, icon=icon_name, color = box_color))
+  
+}
+
+
+
+
+
+valuebox_function_indicators_overview <- function(data,industry_name, box_name, icon_name, box_color, intro){
+  
+  
+  
+  
+  
+  # data ex data = industries_filtered, industry = 'yellow'  
+  colnames(data)[1] <- 'year_month' 
+  data$company <- 'all'
+  
+  
+  yellow_now <- data %>% dplyr::filter(company == industry_name, year_month %in% c(ind_date1,ind_date2,ind_date3)) %>% dplyr::arrange(year_month)
+  
+  setDT(yellow_now)
+  
+  #print(setDT(yellow_now)[,trips][1])
+  
+  
+  inc_dec <- function(one){
+    
+    if(yellow_now[[one]][3] > yellow_now[[one]][2]){
+      month_to_month <- 'increase'
+    } else {
+      month_to_month <- 'decrease'
+    }
+    
+    if(yellow_now[[one]][3] > yellow_now[[one]][1]){
+      year_to_year <- 'increase'
+    } else {
+      year_to_year <- 'decrease'
+    }
+    
+    return(list(month_to_month, year_to_year))
+    
+  }
+  
+  
+
+  
+  
+
+
+  capt1 <- paste0(intro, br(),"Total daily trips (Traditional FHV excluded): ",span(format(yellow_now[[2]][3], big.mark = ','),style = 'font-size:21px; font-weight:bold')," in ",format(yellow_now$year_month[3],"%B %Y"),", which is a ",span(paste0(abs(round(((yellow_now[[2]][3] - yellow_now[[2]][2])/yellow_now[[2]][2]) * 100, 1)),"% ",inc_dec(2)[1]), style=paste0("color:",ifelse(inc_dec(2)[1] == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_month[2]),"%B %Y")," and ",span(paste0(abs(round(((yellow_now[[2]][3] - yellow_now[[2]][1])/yellow_now[[2]][1])*100,1)),"% ",inc_dec(2)[2]), style=paste0("color:",ifelse(inc_dec(2)[2] == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_month[1],"%B %Y"),".",br(),
+                  "Total unique vehicles (Traditional FHV excluded): ",span(format(yellow_now[[3]][3], big.mark = ','),style = 'font-size:21px; font-weight:bold')," in ",format(yellow_now$year_month[3],"%B %Y"),", which is a ",span(paste0(abs(round(((yellow_now[[3]][3] - yellow_now[[3]][2])/yellow_now[[3]][2]) * 100, 1)),"% ",inc_dec(3)[1]), style=paste0("color:",ifelse(inc_dec(3)[1] == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_month[2]),"%B %Y")," and ",span(paste0(abs(round(((yellow_now[[3]][3] - yellow_now[[3]][1])/yellow_now[[3]][1])*100,1)),"% ",inc_dec(3)[2]), style=paste0("color:",ifelse(inc_dec(3)[2] == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_month[1],"%B %Y"),".",br(),
+                  "Total unique drivers (Traditional FHV excluded): ",span(format(yellow_now[[4]][3], big.mark = ','),style = 'font-size:21px; font-weight:bold')," in ",format(yellow_now$year_month[3],"%B %Y"),", which is a ",span(paste0(abs(round(((yellow_now[[4]][3] - yellow_now[[4]][2])/yellow_now[[4]][2]) * 100, 1)),"% ",inc_dec(4)[1]), style=paste0("color:",ifelse(inc_dec(4)[1] == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_month[2]),"%B %Y")," and ",span(paste0(abs(round(((yellow_now[[4]][3] - yellow_now[[4]][1])/yellow_now[[4]][1])*100,1)),"% ",inc_dec(4)[2]), style=paste0("color:",ifelse(inc_dec(4)[2] == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_month[1],"%B %Y"),"."
+
+
+
+
+  )
+  
+  
+  
+  
+  # box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
+  return(valueBox(box_name, caption = capt1, icon=icon_name, color = box_color))
+  
+}
+
+
+
+```
+
+
+Overview
+===
+
+Column
+-----------------------------------------------------------------------
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div style='width: 95%;'>
+
+<p style="font-size:30pt;font-family: fantasy; font-weight: bolder; color:white;">
+STATE OF INDUSTRY
+<span style="font-size:15pt;color:#05b705">
+in `r format(Sys.Date(),"%B %Y")`
+</span>
+</p>
+The New York City Taxi and Limousine Commission (TLC) is the City agency responsible for regulating for-hire transportation in New York City, including yellow taxis, street hail liveries (green taxis), high-volume for-hire services such as Uber and Lyft, other for-hire vehicles such as black cars, luxury limousines, and livery vehicles, as well as commuter vans and paratransit vehicles. TLC licenses about <span style="font-size:13pt; font-weight: bold; color:yellow">
+175,000 drivers, 115,000 cars, and 1,000 businesses</span>, which together transport more than a million passengers a day, making TLC the most active for-hire transportation regulatory agency globally with oversight of a critical component of the City’s transportation network.
+<p style="margin-left:2%; margin-right:3%">
+<span style="font-size:20pt; font-weight: bold; color:yellow; line-height: 0.8">
+In this book</span>
+<span style="font-size:12pt; font-weight:100">
+each tab is a separate report with a different focus. Each report compares data to the previous month and year. Below, you will find short descriptions of each report in this book.</br>
+
+<p>
+
+</div>
+
+<div style = 'margin:20px; border: #ffdd00; border-style: solid; border-radius: 15px; border-width: thick; padding: 5px'>
+
+```{r penguin 30, echo = F, out.width = '70%', fig.align='center'}
+knitr::include_graphics("images/logo.png")
+```
+
+
+</div>
+
+
+
+
+</div>
+
+
+<div>
+
+### HVFHV
+
+```{r}
+capt <- paste0("This State of the Industry data portal presents TLC’s data in a more accessible format, allowing researchers, journalists, industry stakeholders, and members of the public to visualize and analyze TLC data without the technical skills needed to work with raw data sets. The portal is divided into the following sections:")
+valueBox(paste("REPORTS"), caption = capt,  icon='', color = 'info')
+```
+
+</div>
+
+---
+
+<div style='display:flex; flex-direction:row; justify-content:space-between; align-items:center;'>
+
+
+
+<div style='color: white; left: 50px; padding-right: 5%;'>
+
+
+### HVFHV
+
+```{r}
+
+intro_overview <- "The Monthly Trips report displays monthly trip trends split by industries, which are further split by sub-industries and companies. Note: Traditional FHVs are excluded from the total count below. For the Traditional FHV trip counts, please visit the Monthly Trips section."
+
+valuebox_function_overview(total_filtered,"total trips", "Monthly Trips","fas fa-car",'#000000',date1,date2,date3, intro_overview)
+
+```
+
+</div>
+
+
+<div style = 'margin-right: 60px'>
+
+```{r ic28 icon-style}
+icon_style(ionicons("car"), scale = 7, fill = "aqua")
+```
+
+</div>
+
+
+
+</div>
+
+---
+
+<div style='display:flex; flex-direction:row; justify-content:space-between; align-items:center;'>
+
+
+<div style='color: white; left: 50px; padding-right: 5%;'>
+
+
+
+
+
+### HVFHV
+```{r}
+
+intro_overview <- "The Borough Trip Statistics report displays total trip counts by location and industry (Traditional FHV excluded).These visualizations show where different industries tend to operate."
+
+
+
+valuebox_function_boro(trips_by_borough_all, "Trips by Borough","fas fa-car",'#000000', intro_overview) 
+
+```
+
+</div>
+
+
+<div style = 'margin-right: 60px'>
+
+```{r ic25 icon-style}
+icon_style(fontawesome("map", style = "solid"), scale = 6, fill = "aqua")
+```
+
+</div>
+
+
+</div>
+
+
+---
+
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-between; align-items:center;'>
+
+
+
+<div style='color: white; left: 50px; padding-right: 5%;'>
+
+
+### HVFHV
+```{r}
+
+
+intro_overview <- "The Industry Indicators are the metrics that TLC publishes on its website. They cover a myriad of relevant statistics for the industries that TLC regulates."
+
+valuebox_function_indicators_overview(industry_indicators_data_this_month_all,'all','Industry Indicators', "", '#000000',intro_overview)
+
+```
+
+</div>
+
+
+<div style = 'margin-right: 60px'>
+
+```{r ic23 icon-style}
+icon_style(fontawesome("chart-line", style = "solid"), scale = 7, fill = "aqua")
+```
+
+</div>
+
+
+
+</div>
+
+
+
+
+
+---
+
+
+
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-between; align-items:center;'>
+
+
+
+<div style='color: white; left: 50px; padding-right: 5%;'>
+
+
+### HVFHV
+```{r}
+
+intro_overview <- "The Wait Times report displays wait time by location for the HVFHV industry. Wait time is a useful metric in determining supply and demand in different areas of the City."
+
+valuebox_function_overview(average_waittime_overview,"minutes", "Wait Times","fas fa-car",'#000000',date_waittime1,date_waittime2,date_waittime3, intro_overview)
+
+```
+
+</div>
+
+
+<div style = 'margin-right: 60px'>
+
+```{r ic26 icon-style}
+icon_style(fontawesome("user-clock", style = "solid"), scale = 6, fill = "aqua")
+```
+
+</div>
+
+
+
+</div>
+
+---
+
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-between; align-items:center;'>
+
+
+
+<div style='color: white; left: 50px; padding-right: 5%;'>
+
+
+### HVFHV
+```{r}
+
+intro_overview <- "The Crash report displays crash, injury, and fatality counts by month and industry. The report breaks down analysis by industry to determine crash, injury, and fatality counts for each industry segment."
+
+valuebox_function_crashes_overview(data_totals,'total crashes', 'Crashes', "fas fa-taxi", '#000000',intro_overview ) 
+
+```
+
+</div>
+
+
+<div style = 'margin-right: 60px'>
+
+```{r ic24 icon-style}
+icon_style(fontawesome("car-crash", style = "solid"), scale = 6, fill = "aqua")
+```
+
+</div>
+
+
+
+</div>
+
+
+---
+
+
+
+
+
+
+Monthly Trips
+===
+
+Column {data-width=550}
+-------------------------------------
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+
+<p style="margin-left:2%; margin-right:3%; margin-top:2%">
+<span style="font-size:22pt; font-weight: bold; color:yellow; line-height: 0.8">
+Monthly Trips Report</span>
+<span style="font-size:12pt; font-weight:100"> 
+displays monthly trip trends by industries, which are further split by sub-industries.</br>There are two parts to this report:</br> 
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+A)
+</span> 
+The right side of the report displays a list of value boxes showing monthly trip numbers by industry category. The numbers cover  
+<span style = "color: yellow; font-weight:bold;">
+`r format(Sys.Date() %m-% months(1),"%B %Y")`
+</span>
+, and are compared to <span style = "color: yellow; font-weight:bold;">`r format(Sys.Date() %m-% months(2),"%B %Y")`</span> and <span style = "color: yellow; font-weight:bold;">`r format(Sys.Date() %m-% months(13),"%B %Y")`</span>.This includes all industries except traditional FHVs, which cover <span style = "color: yellow; font-weight:bold;">`r format(Sys.Date() %m-% months(2),"%B %Y")`</span> and are compared to <span style = "color: yellow; font-weight:bold;">`r format(Sys.Date() %m-% months(3),"%B %Y")`</span> and <span style = "color: yellow; font-weight:bold;">`r format(Sys.Date() %m-% months(14),"%B %Y")`.</span></br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">B)</span> The left side of the report displays overall trends of the industries and sub-industries. . The data are split by months and looks back as far as the month and year TLC began collecting that particular data set.
+</span> 
+<p>
+
+</div>
+
+<div style = "margin-right:40px;">
+
+```{r mt1 icon-style}
+icon_style(fontawesome("chart-line", style = "solid"), scale = 7, fill = "yellow")
+```
+
+</div>
+
+</div>
+
+
+
+
+
+### Monthly Trip Count by Industry from 2010 to Present
+
+
+
+```{r, fig.width=10, fig.height=3}
+
+
+hchart(industry_indicators_data, "area", hcaes(x = `Month/Year`, y = trips * days_in_month(`Month/Year`), group = `License Class`),color = c("blue","green","white","yellow")) %>%
+  hc_yAxis(title = list(text = "Trip Count")) %>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_add_theme(hc_theme_darkunica()) %>% hc_plotOptions(series = list(marker = list(enabled = FALSE)))
+
+
+```
+
+
+
+-------------------------------------
+### Monthly Trip Count by sub-category for the FHV Industry from January 2015 to Present
+
+
+```{r, fig.width=10, fig.height=3}
+
+hchart(monthly_trips_fhv_data, 'area', hcaes(x = year_month, y = count_trips, group = industry)) %>%
+  hc_yAxis(title = list(text = "Trip Count")) %>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_add_theme(hc_theme_darkunica()) %>% hc_plotOptions(series = list(marker = list(enabled = FALSE)))
+
+```
+
+Column {data-width=330}
+-----------------------------------------------------------------------
+
+
+
+
+---
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+### Yellow
+
+```{r}
+
+valuebox_function_indicators_monthly(industry_indicators_data_this_month[,c(1,2,3)],"Yellow", "MED","",'#000000', 'trips')
+ 
+
+```
+</div>
+
+<div>
+
+### SHL
+
+```{r}
+
+valuebox_function_indicators_monthly(industry_indicators_data_this_month[,c(1,2,3)],"Green", "SHL","",'#000000', 'trips')
+ 
+ 
+```
+
+</div>
+
+</div>
+
+---
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+### HVFHV
+
+
+```{r}
+
+valuebox_function_indicators_monthly(industry_indicators_data_this_month[,c(1,2,3)],"HVFHV", "HVFHV","",'#000000', 'trips') 
+
+
+```
+
+</div>
+
+<div>
+
+### trad
+
+
+```{r}
+
+valuebox_function_indicators_monthly(industry_indicators_data_fhv_this_month[,c(1,2,3)],"FHV", "FHV","",'#000000', 'trips')
+
+
+```
+
+</div>
+
+</div>
+
+---
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+
+
+<div>
+
+### SHL Data
+
+
+
+```{r}
+
+valuebox_function(fhv_filtered,"fhv_livery",'Livery',"fas fa-car",'#000000')
+ 
+```
+
+</div>
+
+</div>
+
+---
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+
+
+<div>
+
+### SHL Data
+
+```{r}
+
+valuebox_function(fhv_filtered,"fhv_black_car",'Black',"fas fa-car",'#000000')
+
+```
+
+</div>
+
+</div>
+
+---
+
+<div>
+
+### SHL Data
+
+```{r}
+
+
+valuebox_function(fhv_filtered,"fhv_lux_limo",'Lux Limo',"fas fa-car",'#000000') 
+
+```
+</div>
+
+---
+
+
+
+Borough Trip Stats
+===
+
+Column {data-width=430}
+-------------------------------------
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+
+<p style="margin-left:2%; margin-right:3%; margin-top:2%">
+<span style="font-size:20pt; font-weight: bold; color:yellow; line-height: 0.8">
+Borough Trip Stats Report</span>
+<span style="font-size:12pt; font-weight:100">
+displays total trip counts by pickup location and industry.</br>These visualizations show where different industries tend to operate.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+A)
+</span>
+The pies below display industry trip shares by borough.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+B)
+</span>
+The map on the right displays how many trips happened by borough. Each borough displays its trip count for <span style = "color: yellow; font-weight:bold;">
+`r format(Sys.Date() %m-% months(1),"%B %Y")`
+</span>
+, and compares those trips to <span style = "color: yellow; font-weight:bold;">`r format(Sys.Date() %m-% months(2),"%B %Y")`</span> and <span style = "color: yellow; font-weight:bold;">`r format(Sys.Date() %m-% months(13),"%B %Y")`</span></br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+C)
+</span>
+NOTE: Location data submitted to TLC by traditional FHV bases can not be verified and therefore are not reflected in this report.
+<p>
+
+</div>
+
+<div style = 'margin-left: 15px; margin-right: 35px'>
+
+```{r br1 icon-style}
+icon_style(fontawesome("map", style = "solid"), scale = 7, fill = "yellow")
+```
+
+</div>
+
+</div>
+
+
+ 
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+
+
+<div>
+
+```{r}
+
+hchart(trips_by_borough_all, "pie", hcaes(x = boro_name, y = this_month))%>%
+  hc_title(text = paste(span("ALL", style = 'color:white'))) %>%
+  hc_size(height=350,width=350)%>%
+  hc_add_theme(hc_theme_sparkline_vb())
+  
+
+
+```
+
+</div>
+
+<div> 
+
+```{r}
+
+hchart(trips_by_borough_hv, "pie", hcaes(x = boro_name, y = this_month))%>%
+  hc_size(height=350,width=350) %>%
+  hc_title(text = paste(span("HVFHV", style = 'color:white')))%>%
+  hc_add_theme(hc_theme_sparkline_vb())
+
+
+```
+
+</div>
+
+</div>
+
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+```{r}
+
+hchart(trips_by_borough_med, "pie", hcaes(x = boro_name, y = this_month))%>%
+  hc_size(height=350,width=350)%>%
+  hc_title(text =paste(span("YELLOW", style = 'color:white')))%>%
+  hc_add_theme(hc_theme_sparkline_vb())
+
+
+```
+
+</div>
+
+<div> 
+
+```{r}
+
+hchart(trips_by_borough_shl, "pie", hcaes(x = boro_name, y = this_month))%>%
+  hc_size(height=350,width=350) %>%
+  hc_title(text =paste(span("GREEN", style = 'color:white')))%>%
+  hc_add_theme(hc_theme_sparkline_vb())
+
+
+```
+
+</div>
+
+</div>
+
+
+   
+Column {data-width=600}
+-------------------------------------  
+    
+### PICKUPs BY BOROUGH
+
+```{r}
+
+leaflet() %>%
+
+  setView(lng = -73.9643, lat = 40.709084, zoom = 11) %>%
+# Adding the first layer of polygons
+  addPolygons(data = ourShapeBoro_all, color = ~pal_trips_all(this_month), fillOpacity = 0.7,
+              weight = 1.3,
+# We must include group so we can switch between them.
+              group = 'ALL',
+              popup = paste0("Boro: ", ourShapeBoro_all@data$boro_name, "<br>",
+                                   "PickUps: ", ourShapeBoro_all@data$this_month),
+                    highlightOptions = highlightOptions(weight = 4,
+                                                        color = "white",
+                                                        bringToFront = TRUE)) %>%
+  addMarkers(
+    lng = centers_all$x, lat = centers_all$y,group = 'ALL',
+    label = lapply(paste0(centers_all$boro_name,br(),label_number_si(accuracy=0.1)(centers_all$this_month)," Trips",br(),span("Mo-to-Mo Change: ", style = 'font-size:12px; color:black'),centers_all$mom_change * 100,"%", br(),span("Y-to-Y Change: ", style = 'font-size:12px; color:black'),centers_all$yoy_change * 100,"%" ), HTML),
+    
+    labelOptions = labelOptions(noHide = T, direction = "top",
+      style = list(
+        "color" = "orange",
+        #"font-family" = "serif",
+        "font-weight" = "bold",
+        "box-shadow" = "3px 3px rgba(0,0,0,0.25)",
+        "font-size" = "20px",
+        "border-color" = "rgba(0,0,0,0.5)"
+      ))) %>%
+  
+    addPolygons(data = ourShapeBoro_hv, color = ~pal_trips_hv(this_month), fillOpacity = 0.7,
+              weight = 1.3,
+# We must include group so we can switch between them.
+              group = 'HVFHV',
+              popup = paste0("Boro: ", ourShapeBoro_hv@data$boro_name, "<br>",
+                                   "PickUps: ", ourShapeBoro_hv@data$this_month),
+                    highlightOptions = highlightOptions(weight = 4,
+                                                        color = "white",
+                                                        bringToFront = TRUE)) %>%
+  addMarkers(
+    lng = centers_hv$x, lat = centers_hv$y, group = 'HVFHV',
+    label = lapply(paste0(centers_all$boro_name,br(),label_number_si(accuracy=0.1)(centers_hv$this_month)," Trips",br(),span("Mo-to-Mo Change: ", style = 'font-size:12px; color:black'),centers_hv$mom_change * 100,"%", br(),span("Y-to-Y Change: ", style = 'font-size:12px; color:black'),centers_hv$yoy_change * 100,"%" ), HTML),
+    
+    labelOptions = labelOptions(noHide = T, direction = "top",
+      style = list(
+        "color" = "orange",
+        #"font-family" = "serif",
+        "font-weight" = "bold",
+        "box-shadow" = "3px 3px rgba(0,0,0,0.25)",
+        "font-size" = "20px",
+        "border-color" = "rgba(0,0,0,0.5)"
+      ))) %>%
+  
+  addPolygons(data = ourShapeBoro_med, color = ~pal_trips_med(this_month), fillOpacity = 0.7,
+              weight = 1.3,
+# We must include group so we can switch between them.
+              group = 'MED',
+              popup = paste0("Boro: ", ourShapeBoro_med@data$boro_name, "<br>",
+                                   "PickUps: ", ourShapeBoro_med@data$this_month),
+                    highlightOptions = highlightOptions(weight = 4,
+                                                        color = "white",
+                                                        bringToFront = TRUE)) %>%
+  addMarkers(
+    lng = centers_med$x, lat = centers_med$y, group = 'YELLOW',
+    label = lapply(paste0(centers_med$boro_name,br(),label_number_si(accuracy=0.1)(centers_med$this_month)," Trips",br(),span("Mo-to-Mo Change: ", style = 'font-size:12px; color:black'),centers_med$mom_change * 100,"%", br(),span("Y-to-Y Change: ", style = 'font-size:12px; color:black'),centers_med$yoy_change * 100,"%" ), HTML),
+    
+    labelOptions = labelOptions(noHide = T, direction = "top",
+      style = list(
+        "color" = "orange",
+        #"font-family" = "serif",
+        "font-weight" = "bold",
+        "box-shadow" = "3px 3px rgba(0,0,0,0.25)",
+        "font-size" = "20px",
+        "border-color" = "rgba(0,0,0,0.5)"
+      ))) %>%
+  
+  addPolygons(data = ourShapeBoro_shl, color = ~pal_trips_shl(this_month), fillOpacity = 0.7,
+              weight = 1.3,
+# We must include group so we can switch between them.
+              group = 'GREEN',
+              popup = paste0("Boro: ", ourShapeBoro_shl@data$boro_name, "<br>",
+                                   "PickUps: ", ourShapeBoro_shl@data$this_month),
+                    highlightOptions = highlightOptions(weight = 4,
+                                                        color = "white",
+                                                        bringToFront = TRUE)) %>%
+  addMarkers(
+    lng = centers_shl$x, lat = centers_shl$y, group = 'SHL',
+    label = lapply(paste0(centers_shl$boro_name,br(),label_number_si(accuracy=0.1)(centers_shl$this_month)," Trips",br(),span("Mo-to-Mo Change: ", style = 'font-size:12px; color:black'),centers_shl$mom_change * 100,"%", br(),span("Y-to-Y Change: ", style = 'font-size:12px; color:black'),centers_shl$yoy_change * 100,"%" ), HTML),
+    
+    labelOptions = labelOptions(noHide = T, direction = "top",
+      style = list(
+        "color" = "orange",
+        #"font-family" = "serif",
+        "font-weight" = "bold",
+        "box-shadow" = "3px 3px rgba(0,0,0,0.25)",
+        "font-size" = "20px",
+        "border-color" = "rgba(0,0,0,0.5)"
+      ))) %>%
+# addLabelOnlyMarkers(data = centers,
+#                     lng = ~x, lat = ~y, label = ~this_month,
+#                     labelOptions = labelOptions(noHide = TRUE, direction = 'top', textOnly = TRUE)) %>%
+# Same as with the previous polygones. The shapefile is
+# different
+#     addPolygons(data = ourShape201902, color = ~pal(avg_wait_time), fillOpacity = 0.7,
+#               weight = 1.3,
+# # Different group.
+#               group = date_waittime2,
+#               popup = paste0("Zone: ", ourShape201902@data$zone, "<br>",
+#                                    "Wait Time: ", ourShape201902@data$avg_wait_time),
+#                     highlightOptions = highlightOptions(weight = 4,
+#                                                         color = "white",
+#                                                         bringToFront = TRUE)) %>%
+# # Same as with the previous polygones. The shapefile is
+# # different
+#     addPolygons(data = ourShape201903, color = ~pal(avg_wait_time), fillOpacity = 0.7,
+#               weight = 1.3,
+# # Different group.
+#               group = date_waittime3,
+#               popup = paste0("Zone: ", ourShape201903@data$zone, "<br>",
+#                                    "Wait Time: ", ourShape201903@data$avg_wait_time),
+#                     highlightOptions = highlightOptions(weight = 4,
+#                                                         color = "white",
+#                                                         bringToFront = TRUE)) %>%
+  # addLegend(group = "ALL_LEGEND",position =  "bottomright", pal = pal_trips_all, values = ourShapeBoro_all@data$this_month,
+  #   title = "ALL_LEGEND", opacity = 0.8) %>%
+  #   addLegend(group = "HVFHV_LEGEND", position =  "bottomright", pal = pal_trips_hv, values = ourShapeBoro_hv@data$this_month,
+  #   title = "HVFHV_LEGEND", opacity = 0.8) %>%
+  #     addLegend(group = "MED_LEGEND", position =  "bottomright", pal = pal_trips_med, values = ourShapeBoro_med@data$this_month,
+  #   title = "MED_LEGEND", opacity = 0.8) %>%
+  #     addLegend(group = "SHL_LEGEND", position =  "bottomright", pal = pal_trips_shl, values = ourShapeBoro_shl@data$this_month,
+  #   title = "SHL_LEGEND", opacity = 0.8) %>%
+# Here, we must use the names that we gave to the groups so we can
+# switch between them. Collapsed = FALSE means visible.
+addLayersControl(baseGroups = c("GREEN","YELLOW","HVFHV","ALL"),
+  options = layersControlOptions(collapsed = FALSE))
+# %>% 
+#    htmlwidgets::onRender("
+#     function() { 
+#       var map = this;
+#       var legends = map.controls._controlsById;
+#       function addActualLegend() {
+#          var sel = $('.leaflet-control-layers-base').find('input[type=\"radio\"]:checked').siblings('span').text().trim();
+#          $.each(map.controls._controlsById, (nm) => map.removeControl(map.controls.get(nm)));
+#          map.addControl(legends[sel]);
+#       }
+#       $('.leaflet-control-layers-base').on('click', addActualLegend);
+#       addActualLegend();
+#    }")
+
+```
+
+
+Industry Indicators
+===
+
+
+Column
+-------------------------------------
+<div style = 'font-size:11px'>
+
+<div>
+
+### HVFHV
+
+```{r}
+capt <- paste0("These are ", a('the metrics that TLC publishes on its website.', href = 'https://www1.nyc.gov/site/tlc/about/aggregated-reports.page'), " They cover a myriad of relevant statistics for the industries TLC regulates.")
+valueBox(paste("Industry Indicators",Sys.Date()), caption = capt,  icon="fas fa-car", color = '#cbce08')
+```
+
+</div>
+
+
+---
+
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+
+<p style="margin-left:2%; margin-right:3%; margin-top:2%">
+<span style="font-size:20pt; font-weight: bold; color:yellow; line-height: 0.8">
+Number of Drivers per Industry</span>
+<span style="font-size:12pt; font-weight:100">
+metric shows the counts of unique drivers that have made at least one trip in a given month. Counts are split by industry.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+A)
+</span>
+The value boxes on the right compare the latest data to the previous month and year.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+B)
+</span>
+The graphs below display temporal trends and ratios.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+C)
+</span>
+Note: TLC drivers can work in multiple industries. For example, a driver may be working for Traditional and High Volume FHV companies at the same time, and is accounted for in both metrics. Because of that, the industry totals should not be added, as that would lead to double-counting. 
+<p>
+
+</div>
+
+<div style = 'margin-left: 15px; margin-right: 15px'>
+
+```{r ic6 icon-style}
+icon_style(fontawesome("id-card", style = "solid"), scale = 10, fill = "yellow")
+```
+
+</div>
+
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+### HVFHV
+
+```{r}
+
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,4)],"HVFHV", "HVFHV","",'#000000', 'unique_drivers') 
+
+```
+
+### FHV Data
+
+```{r}
+
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,4)],"Yellow", "MED","",'#000000', 'unique_drivers') 
+
+```
+</div>
+
+<div>
+
+### Medallion Data
+
+
+```{r}
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,4)],"Green", "SHL","",'#000000', 'unique_drivers')
+```
+
+### SHL Data
+
+
+
+```{r}
+valuebox_function_indicators(industry_indicators_data_fhv_this_month[,c(1,2,4)],"FHV", "FHV","",'#000000', 'unique_drivers')
+
+
+```
+
+</div>
+
+</div>
+
+</div>
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+### NUMBER OF DRIVERS
+
+```{r}
+
+hchart(industry_indicators_data, "area", hcaes(x = `Month/Year`, y = unique_drivers, group = `License Class`),color = c("blue","green","white","yellow"))%>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_add_theme(hc_theme_darkunica())%>% hc_plotOptions(series = list(marker = list(enabled = FALSE)))
+
+```
+</div>
+
+<div>
+
+
+```{r}
+
+
+hchart(industry_indicators_data_this_month[industry_indicators_data_this_month$`Month/Year` == ind_date1,], "pie", hcaes(x = `License Class`, y = unique_drivers,color = c("green","white","yellow")))%>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_title(text = paste(span("Unique Drivers", style = 'color:white'))) %>%
+  hc_add_theme(hc_theme_sparkline_vb())%>% hc_size(height=380,width=380)
+
+```
+
+</div>
+
+</div>
+
+---
+
+
+
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+
+<p style="margin-left:2%; margin-right:3%; margin-top:2%">
+<span style="font-size:20pt; font-weight: bold; color:yellow; line-height: 0.8">
+Number of Vehicles per Industry</span>
+<span style="font-size:12pt; font-weight:100">
+metric shows the counts of unique vehicles that have made at least one trip in a given month. Counts are split by industry.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+A)
+</span>
+The value boxes on the right compare the latest data with the previous month and year.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+B)
+</span>
+The graphs below display temporal trends and ratios.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+C)
+</span>
+Note: TLC vehicles can work in multiple industries. For example, a vehicle may be working for Traditional and High Volume FHV companies at the same time, and is accounted for in both metrics. Because of that, the industry totals should not be added, as that would lead to double-counting. 
+<p>
+
+</div>
+
+<div style = 'margin-left: 15px; margin-right: 15px'>
+
+```{r ic5 icon-style}
+icon_style(fontawesome("car", style = "solid"), scale = 10, fill = "yellow")
+```
+
+</div>
+
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+### HVFHV
+
+```{r}
+
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,5)],"HVFHV", "HVFHV","",'#000000', 'unique_vehicles') 
+
+```
+
+### FHV Data
+
+```{r}
+
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,5)],"Yellow", "MED","",'#000000', 'unique_vehicles') 
+
+```
+</div>
+
+<div>
+
+### Medallion Data
+
+
+```{r}
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,5)],"Green", "SHL","",'#000000', 'unique_vehicles')
+```
+
+### SHL Data
+
+
+
+```{r}
+valuebox_function_indicators(industry_indicators_data_fhv_this_month[,c(1,2,5)],"FHV", "FHV","",'#000000', 'unique_vehicles')
+
+
+```
+
+</div>
+
+</div>
+
+</div>
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+### VEHICLES
+
+```{r}
+
+hchart(industry_indicators_data, "area", hcaes(x = `Month/Year`, y = unique_vehicles, group = `License Class`),color = c("blue","green","white","yellow")) %>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_add_theme(hc_theme_darkunica()) %>% hc_plotOptions(series = list(marker = list(enabled = FALSE)))
+
+```
+</div>
+
+<div>
+
+
+```{r}
+
+
+hchart(industry_indicators_data_this_month[industry_indicators_data_this_month$`Month/Year` == ind_date1,], "pie", hcaes(x = `License Class`, y = unique_vehicles,color = c("green","white","yellow")))%>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_title(text = paste(span("Unique Vehicles", style = 'color:white'))) %>%
+  hc_add_theme(hc_theme_sparkline_vb())%>% hc_size(height=380,width=380)
+
+```
+
+</div>
+
+</div>
+
+---
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+
+<p style="margin-left:2%; margin-right:3%; margin-top:2%">
+<span style="font-size:20pt; font-weight: bold; color:yellow; line-height: 0.8">
+Average Days Vehicles on the Road</span>
+<span style="font-size:12pt; font-weight:100">
+metric reflects the activity of different industries based on the average days vehicles are on the road making trips. Counts are split by industry.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+A)
+</span>
+The value boxes on the right compare the latest data with the previous month and year.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+B)
+</span>
+The graphs below display temporal trends and weighted ratios.
+<p>
+
+</div>
+
+<div style = 'margin-left: 15px; margin-right: 15px'>
+
+```{r ic4 icon-style}
+icon_style(fontawesome("calendar-week", style = "solid"), scale = 10, fill = "yellow")
+```
+
+</div>
+
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+### HVFHV
+
+```{r}
+
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,6)],"HVFHV", "HVFHV","",'#000000', 'avg_days_veh_on_road') 
+
+```
+
+### FHV Data
+
+```{r}
+
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,6)],"Yellow", "MED","",'#000000', 'avg_days_veh_on_road') 
+
+```
+</div>
+
+<div>
+
+### Medallion Data
+
+
+```{r}
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,6)],"Green", "SHL","",'#000000', 'avg_days_veh_on_road')
+```
+
+### SHL Data
+
+
+
+```{r}
+valuebox_function_indicators(industry_indicators_data_fhv_this_month[,c(1,2,6)],"FHV", "FHV","",'#000000', 'avg_days_veh_on_road')
+
+
+```
+
+</div>
+
+</div>
+
+</div>
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+### AVERAGE DAYS VEHICLES ON THE ROAD
+
+```{r}
+
+hchart(industry_indicators_data, "line", hcaes(x = `Month/Year`, y = avg_days_veh_on_road, group = `License Class`),color = c("blue","green","white","yellow")) %>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_add_theme(hc_theme_darkunica()) %>% hc_plotOptions(series = list(marker = list(enabled = FALSE)))
+
+```
+</div>
+
+
+
+</div>
+
+
+---
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+
+<p style="margin-left:2%; margin-right:3%; margin-top:2%">
+<span style="font-size:20pt; font-weight: bold; color:yellow; line-height: 0.8">
+Average Hours Per Day on the Road</span>
+<span style="font-size:12pt; font-weight:100">
+metric reflects the activity of different industries based on how many hours a day vehicles from that industry are on the road.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+A)
+</span>
+The value boxes on the right compare the latest data to the previous month and year.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+B)
+</span>
+The graphs below display temporal trends and ratios. 
+<p>
+
+</div>
+
+<div style = 'margin-left: 15px; margin-right: 15px'>
+
+```{r ic3 icon-style}
+icon_style(fontawesome("user-clock", style = "solid"), scale = 10, fill = "yellow")
+```
+
+</div>
+
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+### HVFHV
+
+```{r}
+
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,7)],"HVFHV", "HVFHV","",'#000000', 'avg_hours_per_day_veh') 
+
+```
+
+### FHV Data
+
+```{r}
+
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,7)],"Yellow", "MED","",'#000000', 'avg_hours_per_day_veh') 
+
+```
+</div>
+
+<div>
+
+### Medallion Data
+
+
+```{r}
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,7)],"Green", "SHL","",'#000000', 'avg_hours_per_day_veh')
+```
+
+### SHL Data
+
+
+
+```{r}
+valuebox_function_indicators(industry_indicators_data_fhv_this_month[,c(1,2,7)],"FHV", "FHV","",'#000000', 'avg_hours_per_day_veh')
+
+
+```
+
+</div>
+
+</div>
+
+</div>
+
+
+
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+### AVERAGE HOURS PER DAY ON THE ROAD
+
+```{r}
+
+hchart(industry_indicators_data, "line", hcaes(x = `Month/Year`, y = avg_hours_per_day_veh, group = `License Class`),color = c("blue","green","white","yellow")) %>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_add_theme(hc_theme_darkunica()) %>% hc_plotOptions(series = list(marker = list(enabled = FALSE)))
+
+```
+</div>
+
+
+
+</div>
+
+
+---
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+
+<p style="margin-left:2%; margin-right:3%; margin-top:2%">
+<span style="font-size:20pt; font-weight: bold; color:yellow; line-height: 0.8">
+Average Trip Length in Minutes</span>
+<span style="font-size:12pt; font-weight:100">
+metric displays how long on average it took to complete a trip in a given month. Counts are split by industry.</br>This metric is useful to analyze traffic conditions on the road.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+A)
+</span>
+The value boxes on the right compare the latest data with the previous month and year.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+B)
+</span>
+The graphs below display temporal trends and market proportions.
+<p>
+
+</div>
+
+<div style = 'margin-left: 15px; margin-right: 15px'>
+
+```{r ic1 icon-style}
+icon_style(fontawesome("hourglass-end", style = "solid"), scale = 10, fill = "yellow")
+```
+
+</div>
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div style = 'color:white;'>
+
+### HVFHV
+
+```{r}
+
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,8)],"HVFHV", "HVFHV","",'#000000', 'avg_mins_trip') 
+
+```
+
+### FHV Data
+
+```{r}
+
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,8)],"Yellow", "MED","",'#000000', 'avg_mins_trip') 
+
+```
+</div>
+
+
+
+<div>
+
+### Medallion Data
+
+
+```{r}
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,8)],"Green", "SHL","",'#000000', 'avg_mins_trip')
+```
+
+### SHL Data
+
+
+
+```{r}
+valuebox_function_indicators(industry_indicators_data_fhv_this_month[,c(1,2,8)],"FHV", "FHV","",'#000000', 'avg_mins_trip')
+
+
+```
+
+</div>
+
+</div>
+
+</div>
+
+
+
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+### AVERAGE TRIP LENGTH IN MINUTES
+
+```{r}
+
+hchart(industry_indicators_data, "line", hcaes(x = `Month/Year`, y = avg_mins_trip, group = `License Class`),color = c("blue","green","white","yellow")) %>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_add_theme(hc_theme_darkunica()) %>% hc_plotOptions(series = list(marker = list(enabled = FALSE)))
+
+```
+</div>
+
+
+
+</div>
+
+
+---
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+
+<p style="margin-left:2%; margin-right:3%; margin-top:2%">
+<span style="font-size:20pt; font-weight: bold; color:yellow; line-height: 0.8">
+Bases Reporting Trips</span>
+<span style="font-size:12pt; font-weight:100">
+metric displays counts of bases that were active and dispatching trips. The counts are split by industry and are on a two month delay.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+A)
+</span>
+The value boxes on the right compare the latest data to the previous month and year.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+B)
+</span>
+The graphs below display temporal trends, as well as the latest proportion of active bases by industry.
+<p>
+
+</div>
+
+<div style = 'margin-left: 15px; margin-right: 15px'>
+
+```{r ic8 icon-style}
+icon_style(fontawesome("warehouse", style = "solid"), scale = 10, fill = "yellow")
+```
+
+</div>
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+### HVFHV
+
+```{r}
+
+valuebox_function_indicators_base(stat_this_month,"FHV - High Volume", "HVFHV","",'#000000', 'n') 
+
+```
+
+### FHV Data
+
+```{r}
+
+valuebox_function_indicators_base(stat_this_month,"FHV - Black Car", "Black","",'#000000', 'n') 
+
+```
+</div>
+
+<div>
+
+### Medallion Data
+
+
+```{r}
+valuebox_function_indicators_base(stat_this_month,"FHV - Livery", "Livery","",'#000000', 'n') 
+```
+
+### SHL Data
+
+
+
+```{r}
+valuebox_function_indicators_base(stat_this_month,"FHV - Lux Limo", "Lux Limo","",'#000000', 'n') 
+
+
+```
+
+</div>
+
+</div>
+
+</div>
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+### BASES REPORTING TRIPS
+
+```{r}
+
+hchart(stat, "line", hcaes(x = year_month, y = n, group = lic_class),color = c("black","white","red","blue")) %>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_add_theme(hc_theme_darkunica())
+
+```
+</div>
+
+<div>
+
+
+```{r}
+
+
+hchart(stat_this_month[stat_this_month$year_month == base_date1,], "pie", hcaes(x = lic_class, y = n, color = c('orange',"white","red","blue")))%>%
+  hc_title(text = paste(span("BASES", style = 'color:white'))) %>%
+  hc_add_theme(hc_theme_sparkline_vb()) %>%
+  hc_add_theme(hc_theme_sparkline_vb())%>% hc_size(height=380,width=380)
+  
+
+
+```
+
+</div>
+
+</div>
+
+
+
+---
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+
+<p style="margin-left:2%; margin-right:3%; margin-top:2%">
+<span style="font-size:20pt; font-weight: bold; color:yellow; line-height: 0.8">
+Percent of Credit Card Transactions</span>
+<span style="font-size:12pt; font-weight:100">
+metric displays how often customers paid with credit cards.</br>This metric only covers SHL and Medallions.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+A)
+</span>
+The value boxes on the right compare the latest data with the previous month and year.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+B)
+</span>
+The graphs below display temporal trends.  
+<p>
+
+</div>
+
+<div style = 'margin-left: 25px; margin-right: 45px'>
+
+```{r ic2 icon-style}
+icon_style(fontawesome("credit-card", style = "solid"), scale = 10, fill = "yellow")
+```
+
+</div>
+
+
+
+<div style='display:flex; flex-direction:column; justify-content:space-evenly; align-items:center;'>
+
+
+
+### HVFHV
+
+```{r}
+
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,9)],"Yellow", "MED","",'#000000', 'credit_card') 
+
+```
+
+### FHV Data
+
+```{r}
+
+valuebox_function_indicators(industry_indicators_data_this_month[,c(1,2,9)],"Green", "SHL","",'#000000', 'credit_card') 
+
+```
+
+
+
+
+</div>
+
+</div>
+
+
+### PERCENT OF CREDIT CARD TRANSACTIONS
+
+```{r}
+
+hchart(industry_indicators_data, "line", hcaes(x = `Month/Year`, y = credit_card, group = `License Class`),color = c("blue","green","white","yellow")) %>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_add_theme(hc_theme_darkunica()) %>% hc_plotOptions(series = list(marker = list(enabled = FALSE)))
+
+```
+
+
+
+
+
+---
+
+</div>
+
+
+HVFHV Wait Times
+===
+
+Column {data-width=380}
+-------------------------------------
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+
+<p style="margin-left:2%; margin-right:3%; margin-top:2%">
+<span style="font-size:20pt; font-weight: bold; color:yellow; line-height: 0.8">
+The High-Volume FHV Wait Times Report</span>
+<span style="font-size:12pt; font-weight:100">
+displays wait time by location for the HVFHV industry. Wait times is a very useful metric in determining supply and demand in different areas of the city.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+A)
+</span>
+The table below displays wait times for HVFHV by taxi zones. Data is indicated in descending order, displaying the longest wait times first. The graph below the table reflects changes in average wait time, aggregated monthly.
+</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+B)
+</span>
+The map on the right is a visual representation of the table below. The darker the color, the longer the wait time in each taxi zone.  
+<p>
+
+</div>
+
+<div style = 'margin-left: 15px; margin-right: 35px'>
+
+```{r wt1 icon-style}
+icon_style(fontawesome("user-clock", style = "solid"), scale = 7, fill = "yellow")
+```
+
+</div>
+
+</div>
+
+
+   
+### Average Wait Time by Zone (in minutes) in `r format(Sys.Date() %m-% months(1),"%B %Y")`
+
+```{r}
+
+div(DT::datatable(ourShape201901@data[order(-ourShape201901@data$avg_wait_time), c("zone",  "avg_wait_time")],rownames= FALSE, caption = paste0('As of ',format(date_waittime1,"%B %Y")), options = list(scrollY = "400px",scrollX = TRUE)), style = "font-size: 80%; width: 100%;height:350px; font-weight: bold; color:black")
+
+```
+
+
+ 
+### Average Wait Time Across the City (in minutes)
+
+```{r, fig.height=2}
+
+hchart(average_waittime_all, 'line', hcaes(x = metric_month, y = avg_wait_time))%>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_add_theme(hc_theme_darkunica())
+
+```
+
+  
+   
+Column {data-width=620}
+-------------------------------------  
+    
+### Wait Times in NYC (in minutes)
+
+```{r}
+
+leaflet() %>%
+
+  setView(lng = -73.9643, lat = 40.709084, zoom = 11) %>%
+# Adding the first layer of polygons
+  addPolygons(data = ourShape201901, color = ~pal(avg_wait_time), fillOpacity = 0.7,
+              weight = 1.3,
+# We must include group so we can switch between them.
+              group = date_waittime1,
+              popup = paste0("Zone: ", ourShape201901@data$zone, "<br>",
+                                   "Wait Time: ", ourShape201901@data$avg_wait_time),
+                    highlightOptions = highlightOptions(weight = 4,
+                                                        color = "white",
+                                                        bringToFront = TRUE)) %>%
+# Same as with the previous polygones. The shapefile is
+# different
+    addPolygons(data = ourShape201902, color = ~pal(avg_wait_time), fillOpacity = 0.7,
+              weight = 1.3,
+# Different group.
+              group = date_waittime2,
+              popup = paste0("Zone: ", ourShape201902@data$zone, "<br>",
+                                   "Wait Time: ", ourShape201902@data$avg_wait_time),
+                    highlightOptions = highlightOptions(weight = 4,
+                                                        color = "white",
+                                                        bringToFront = TRUE)) %>%
+# Same as with the previous polygones. The shapefile is
+# different
+    addPolygons(data = ourShape201903, color = ~pal(avg_wait_time), fillOpacity = 0.7,
+              weight = 1.3,
+# Different group.
+              group = date_waittime3,
+              popup = paste0("Zone: ", ourShape201903@data$zone, "<br>",
+                                   "Wait Time: ", ourShape201903@data$avg_wait_time),
+                    highlightOptions = highlightOptions(weight = 4,
+                                                        color = "white",
+                                                        bringToFront = TRUE)) %>%
+  addLegend("bottomright", pal = pal, values = ourShape201903@data$avg_wait_time,
+    title = "Wait Times", opacity = 0.8) %>%
+# Here, we must use the names that we gave to the groups so we can
+# switch between them. Collapsed = FALSE means visible.
+  addLayersControl(baseGroups = c(date_waittime1, date_waittime2,date_waittime3),
+    options = layersControlOptions(collapsed = FALSE))
+
+```
+
+
+
+
+Monthly Crashes
+===
+
+
+Column {data-width=500}
+-------------------------------------
+
+
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+
+<p style="margin-left:2%; margin-right:3%; margin-top:2%">
+<span style="font-size:20pt; font-weight: bold; color:yellow; line-height: 0.8">
+Monthly Crash Report</span>
+<span style="font-size:12pt; font-weight:100">
+displays crash, injury, and fatality counts by month and industry. This section is a visual representation of the data required <a href="https://www1.nyc.gov/assets/tlc/downloads/excel/local_law_31.xlsx">by Local Law 31</a>, which is posted on TLC’s website. Crash and injury data takes into account the number of vehicles operating within each industry.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+A)
+</span>
+The value boxes on the right compare the latest data to the previous month and year. The graphs display temporal trends.</br>
+<span style="font-size:13pt; font-weight: bold; color:yellow">
+B)
+</span>
+The pies below represent share of crashes by industry, per 10000 vehicles.
+<p>
+</div>
+
+<div style = 'margin-left: 15px; margin-right: 35px'>
+
+```{r cc1 icon-style}
+icon_style(fontawesome("car-crash", style = "solid"), scale = 7, fill = "red")
+```
+
+</div>
+
+</div>
+
+---
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+
+
+```{r}
+
+hchart(all_crashes_known_average, "pie", hcaes(x = category, y = crash_per_100, color = c('black', 'yellow', 'green')))%>%
+ 
+  hc_size(height=370,width=370) %>%
+  hc_title(text =paste(span("Crashes per 10000 Vehicles", style = 'color:white'),br(),span("(2016 to Present)", style = 'color:white')))%>%
+  hc_add_theme(hc_theme_sparkline_vb())
+
+```
+
+
+
+```{r}
+
+hchart(all_crashes_injuries_average, "pie", hcaes(x = category, y = crash_per_100, color = c('black', 'yellow', 'green')))%>%
+
+  hc_size(height=370,width=370)%>%
+  hc_title(text =paste(span("Injuries per 10000 Vehicles", style = 'color:white'),br(),span("(2016 to Present)", style = 'color:white')))%>%
+  hc_add_theme(hc_theme_sparkline_vb())
+
+```
+
+</div>
+
+<div>
+
+
+
+```{r}
+hchart(all_crashes_critical_average, "pie", hcaes(x = category, y = crash_per_100, color = c('black', 'yellow', 'green')))%>%
+ 
+  hc_size(height=370,width=370)%>%
+  hc_title(text =paste(span("Critical Injuries per 10000 Vehicles", style = 'color:white'),br(),span("(2016 to Present)", style = 'color:white')))%>%
+  hc_add_theme(hc_theme_sparkline_vb())
+```
+
+
+
+```{r}
+hchart(all_crashes_fatal_average, "pie", hcaes(x = category, y = crash_per_100, color = c('black', 'yellow', 'green')))%>%
+  
+  hc_size(height=370,width=370)%>%
+  hc_title(text =paste(span("Deaths per 10000 Vehicles", style = 'color:white'),br(),span("(2016 to Present)", style = 'color:white')))%>%
+  hc_add_theme(hc_theme_sparkline_vb())
+```
+
+</div>
+
+</div>
+
+
+
+
+Column {data-width=500}
+-------------------------------------
+
+<div style='display:flex; flex-direction:row; justify-content:space-evenly; align-items:center;'>
+
+<div>
+
+### T
+
+```{r}
+
+valuebox_function_crashes(data_totals,'total crashes', 'Crashes', "", '#000000' )
+
+```
+
+### ghg
+
+```{r}
+
+valuebox_function_crashes(data_totals,'total injuries', 'Injuries', "", '#000000' )
+
+```
+
+</div>
+
+<div>
+
+### tt
+
+```{r}
+valuebox_function_crashes(data_totals,'total critical injuries', 'Critical Injuries', "", '#000000' )
+```
+
+### gg 
+
+```{r}
+valuebox_function_crashes(data_totals,'total fatalities', 'Fatal', "", '#000000' )
+```
+
+</div>
+
+</div>
+
+### Number of Crashes per 10000 Vehicles
+
+```{r, fig.height=3}
+
+hchart(all_crashes_known, 'line', hcaes(x = year_mon, y = crash_per_100, group = category), color = c('blue', 'yellow', 'green'))%>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_add_theme(hc_theme_darkunica())%>% hc_plotOptions(series = list(marker = list(enabled = FALSE)))
+
+```
+
+### Crashes Involving Injuries per 10000 Vehicles
+
+```{r, fig.height=3}
+
+hchart(all_crashes_injuries, 'line', hcaes(x = year_mon, y = crash_per_100, group = category), color = c('blue', 'yellow', 'green'))%>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_add_theme(hc_theme_darkunica())%>% hc_plotOptions(series = list(marker = list(enabled = FALSE)))
+
+```
+
+### Crashes Involving Critical Injury 
+
+```{r, fig.height=2}
+
+hchart(all_crashes_critical, 'column', hcaes(x = year_mon, y = total_crashes, group = category),
+    stacking = "normal", color = c('blue', 'yellow', 'green')) %>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_add_theme(hc_theme_darkunica())
+
+```
+
+### Crashes Involving Fatality
+
+```{r, fig.height=2}
+
+hchart(all_crashes_fatal, 'column', hcaes(x = year_mon, y = total_crashes, group = category),
+    stacking = "normal", color = c('blue', 'yellow', 'green')) %>%
+  hc_xAxis(title = list(text = "Month/Year"),
+    plotLines = list(list(
+      value = datetime_to_timestamp(as.Date("2020-03-01", tz = "UTC")),
+      color = 'orange',
+      width = 3,
+      zIndex = 4,
+      label = list(text = "COVID LOCKDOWN",
+                   style = list( color = 'yellow', fontWeight = 'bold' )
+      )))) %>%
+  hc_add_theme(hc_theme_darkunica())
+
+```
+
+
+
+
+
+
