@@ -6,37 +6,34 @@
 
 ## Check It Out
 
-- See the app on the TLC's website here: 
+- See the app on the TLC's website here: https://analytics-tlc.github.io/state_of_industry
 
 ## Overview
 
 This State of the Industry data portal presents TLC’s data in a more accessible format, allowing researchers, journalists, industry stakeholders, and members of the public to visualize and analyze TLC data without the technical skills needed to work with raw data sets.
 
-Currently, the app includes the following dashboards:
+The portal is divided into the following sections::
 
-- &#x1F4C8; **Trips Dashboard** <img src="all.png" align="right" width="35%"  />
+- &#x1F4C8; **Monthly Trips** <img src="all.png" align="right" width="35%"  />
 
-    The 'Trip Data' dashboard displays and compares the pickup, dropoff, trip, trip fare, trip time, and trip distance data across different locations, industries and periods.
+    The Monthly Trips report displays monthly trip trends split by industries, which are further split by sub-industries and companies. Note: Traditional FHVs are excluded from the total count below. For the Traditional FHV trip counts, please visit the Monthly Trips section.
     
-    All the selections that you've made in the control panel will be represented on the map and info box. The info box allows you to switch between the monthly and daily levels of data.
-    
-- &#x1F4C8; **Industry Indicators Dashboard** 
+- &#x1F4C8; **Trips by Borough** 
 
-    The industry metrics dashboard visualizes our monthly industry indicators published on OUR WEBSITE. These indicators cover a wide variety of topics from trips per day to the number of unique vehicles by industry sector.
+    The Borough Trip Statistics report displays total trip counts by location and industry (Traditional FHV excluded).These visualizations show where different industries tend to operate.
 
-- &#x1F4C8; **Fare & Earnings Dashboard** 
+- &#x1F4C8; **Industry Indicators** 
 
-    The Fare Dashboard allows you to explore detailed industry fare breakdowns. We receive different financial data from different industries. In this dashboard, we reflect Yellow, Green, and High Volume FHV total and average fare information.
+    The Industry Indicators are the metrics that TLC publishes on its website. They cover a myriad of relevant statistics for the industries that TLC regulates.
 
-- &#x1F4C8; **DataBank** 
+- &#x1F4C8; **Wait Times** 
 
-    The databank section allows you to scroll through, download, and get more familiar with the raw data used to create the dashboards.
+    The Wait Times report displays wait time by location for the HVFHV industry. Wait time is a useful metric in determining supply and demand in different areas of the City.
 
-- &#x1F4C8; **Downloadable Reports and Raw Data** 
+- &#x1F4C8; **Crashes** 
 
-    The DataHub allows you to download summary reports of the pages with the selections that you made in the control bar. The format of the file is 'HTML'. THe size is approx. 8mb. The reports can be further used for analyses or presentations. Additionally, you can visit the DataBank section of the app and download the raw data that we used to build this tool.
+    The Crash report displays crash, injury, and fatality counts by month and industry. The report breaks down analysis by industry to determine crash, injury, and fatality counts for each industry segment.
 
-<br />
 <br />
 
 ## &#x1F4C8; **Frequency of Updates & Diagrams**
@@ -89,14 +86,14 @@ graph LR
 
 This dashboard was built using many great tools in the R ecosystem. Thanks to all of the developers of these open source packages:
 
-- [shiny]
-- [shinydashboard]
+- [flexdashboard]
+- [RMarkdown]
 - [plotly]
 - [tidyverse]
 - [shinycssloaders]
 - [DT]
 
-...and many more. For a full list of project dependencies, see the Global.R file.
+...and many more. For a full list of project dependencies, see the Rmd file.
     
 ---
 
@@ -111,10 +108,8 @@ This dashboard was built by [Nikita Voevodin] and is owned by the NYC Government
 [datatable]: https://www.datatables.net/
 [datatables]: https://www.datatables.net/
 [app-rstudio-cloud]: https://rstudio.cloud/spaces/12362/project/258314
-[app-grrrck]: https://apps.garrickadenbuie.com/rstudioconf-2019/
 [app-shinyapps]: https://gadenbuie.shinyapps.io/tweet-conf-dash/
 [mit-license]: https://choosealicense.com/licenses/mit/
-[garrick-home]: https://www.garrickadenbuie.com
 [repo]: https://github.com/gadenbuie/tweet-conf-dash/
 [shiny]: http://shiny.rstudio.com/
 [rtweet]: https://rtweet.info
