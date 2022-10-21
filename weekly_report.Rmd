@@ -63,7 +63,7 @@ library(janitor)
 library(DBI)
 library(odbc)
 library(icons)
-
+library(janitor)
 
 # Function that displays when was the last time the report was updated
 # It is conditional and will show differently depending on time that passed
@@ -830,64 +830,141 @@ valuebox_function_indicators_base <-
 # It provides m to m and y to y trip num comparisons End--------------------------------
 
 
-##HV Utilization----------------------------------------------------------------------
+# HV Utilization----------------------------------------------------------------------
 
-average_weekly_utilization <- setDT(sqlQuery(policy_con,
-paste0("SELECT 
+# Pulling utilization data from the datawarehouse
+
+average_weekly_utilization <- setDT(sqlQuery(
+  policy_con,
+  paste0(
+    "SELECT
       DATEADD(MONTH, DATEDIFF(MONTH, 0, [metric_week]), 0) as year_month
       ,[company]
       ,avg([sum_cruising_seconds]/3600) as avg_hours_cruising
       ,avg([sum_passenger_seconds]/3600) as avg_hours_with_passenger
       ,round(avg([pct_utilization]) * 100,1) as avg_utilization
   FROM [TLC_PLCPRG_PRD].[dbo].[company_indicators_weekly_utilization_even]
-  where [metric_week] < ","'",monthly_trips_year_mon,"'", "
+  where [metric_week] < ",
+  "'",
+  monthly_trips_year_mon,
+  "'",
+  "
   group by DATEADD(MONTH, DATEDIFF(MONTH, 0, [metric_week]), 0),[company]
-")))
-average_weekly_utilization$year_month <- ymd(average_weekly_utilization$year_month)
+"
+  )
+))
+
+
+# Basic aggregations and reshaping to get the data into the right shape Start ----------------
+average_weekly_utilization$year_month <-
+  ymd(average_weekly_utilization$year_month)
 
 date_utilization1 <- max(average_weekly_utilization$year_month)
 date_utilization2 <- date_utilization1 %m-% months(1)
 date_utilization3 <- date_utilization1 %m-% months(12)
 
-total_weekly_utilization <- average_weekly_utilization %>% dplyr::filter(year_month %in% c(date_utilization1,date_utilization2,date_utilization3)) %>% dplyr::group_by(year_month) %>% dplyr::summarise(avg_utilization = mean(avg_utilization, na.rm=TRUE )) %>% dplyr::arrange(year_month)
+total_weekly_utilization <-
+  average_weekly_utilization %>% dplyr::filter(year_month %in% c(date_utilization1, date_utilization2, date_utilization3)) %>% dplyr::group_by(year_month) %>% dplyr::summarise(avg_utilization = mean(avg_utilization, na.rm =
+                                                                                                                                                                                                         TRUE)) %>% dplyr::arrange(year_month)
 
 total_weekly_utilization$Metrics <- 'percent on average'
-colnames(total_weekly_utilization) <- c('year_mon', 'value','Metrics' )
-total_weekly_utilization <- total_weekly_utilization %>% dplyr::select(year_mon, Metrics, value)
+colnames(total_weekly_utilization) <-
+  c('year_mon', 'value', 'Metrics')
+total_weekly_utilization <-
+  total_weekly_utilization %>% dplyr::select(year_mon, Metrics, value)
+
+# Basic aggregations and reshaping to get the data into the right shape End ----------------
 
 
-valuebox_function_utilization <- function(data,industry_name, box_name, icon_name, box_color ){
-# data ex data = industries_filtered, industry = 'yellow'  
-  yellow_now <- data %>% dplyr::filter(company == industry_name, year_month %in% c(date_utilization1,date_utilization2,date_utilization3)) %>% dplyr::arrange(year_month)
-  
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons Start--------------------------------
+
+valuebox_function_utilization <-
+  function(data,
+           industry_name,
+           box_name,
+           icon_name,
+           box_color) {
+    # data ex data = industries_filtered, industry = 'yellow'
+    yellow_now <-
+      data %>% dplyr::filter(
+        company == industry_name,
+        year_month %in% c(date_utilization1, date_utilization2, date_utilization3)
+      ) %>% dplyr::arrange(year_month)
+    
+    
+    
+    if (yellow_now$avg_utilization[3] > yellow_now$avg_utilization[2]) {
+      month_to_month <- 'increase'
+    } else {
+      month_to_month <- 'decrease'
+    }
+    
+    if (yellow_now$avg_utilization[3] > yellow_now$avg_utilization[1]) {
+      year_to_year <- 'increase'
+    } else {
+      year_to_year <- 'decrease'
+    }
+    
+    
+    
+    capt1 <-
+      paste0(
+        "Utilization rate was at ",
+        span(format(
+          yellow_now$avg_utilization[3], big.mark = ','
+        ), style = 'font-size:21px; font-weight:bold'),
+        "% in ",
+        format(yellow_now$year_month[3], "%B %Y"),
+        ", which is a ",
+        span(
+          paste0(abs(round(((yellow_now$avg_utilization[3] - yellow_now$avg_utilization[2]) /
+                              yellow_now$avg_utilization[2]
+          ) * 100, 1
+          )), "% ", month_to_month),
+          style = paste0(
+            "color:",
+            ifelse(month_to_month == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(ymd(yellow_now$year_month[2]), "%B %Y"),
+        " and ",
+        span(
+          paste0(abs(round(((yellow_now$avg_utilization[3] - yellow_now$avg_utilization[1]) /
+                              yellow_now$avg_utilization[1]
+          ) * 100, 1
+          )), "% ", year_to_year),
+          style = paste0(
+            "color:",
+            ifelse(year_to_year == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(yellow_now$year_month[1], "%B %Y"),
+        "."
+      )
+    
+    
+    
+    
+    # box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
+    return(valueBox(
+      box_name,
+      caption = capt1,
+      icon = icon_name,
+      color = box_color
+    ))
+    
+  }
+
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons End--------------------------------
 
 
-if(yellow_now$avg_utilization[3] > yellow_now$avg_utilization[2]){
-  month_to_month <- 'increase'
-} else {
-  month_to_month <- 'decrease'
-}
-
-if(yellow_now$avg_utilization[3] > yellow_now$avg_utilization[1]){
-  year_to_year <- 'increase'
-} else {
-  year_to_year <- 'decrease'
-}
-  
-
-  
-capt1 <- paste0("Utilization rate was at ",span(format(yellow_now$avg_utilization[3], big.mark = ','),style = 'font-size:21px; font-weight:bold'),"% in ",format(yellow_now$year_month[3],"%B %Y"),", which is a ",span(paste0(abs(round(((yellow_now$avg_utilization[3] - yellow_now$avg_utilization[2])/yellow_now$avg_utilization[2]) * 100, 1)),"% ",month_to_month), style=paste0("color:",ifelse(month_to_month == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_month[2]),"%B %Y")," and ",span(paste0(abs(round(((yellow_now$avg_utilization[3] - yellow_now$avg_utilization[1])/yellow_now$avg_utilization[1])*100,1)),"% ",year_to_year), style=paste0("color:",ifelse(year_to_year == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_month[1],"%B %Y"),".")
-
-
-
-
-# box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
-return(valueBox(box_name, caption = capt1, icon=icon_name, color = box_color))
-  
-}
-
-
-##HV waittimes----------------------------------------------------------------------
+# HV waittimes----------------------------------------------------------------------
 
 
 # Loading the shapefile three times into different variables
@@ -895,20 +972,33 @@ ourShape201901 <- raster::shapefile('data/shape/taxi_zones.shp')
 ourShape201902 <- raster::shapefile('data/shape/taxi_zones.shp')
 ourShape201903 <- raster::shapefile('data/shape/taxi_zones.shp')
 
-average_waittime <- setDT(sqlQuery(policy_con,
-paste0("SELECT 
-     
+
+# pulling waittime infor from the warehouse
+
+average_waittime <- setDT(sqlQuery(
+  policy_con,
+  paste0(
+    "SELECT
+
       [metric_month]
       ,[industry]
       ,[zone]
- 
+
       ,round([avg_wait_time]/60,1) as avg_wait_time
 
   FROM [TLC_PLCPRG_PRD].[dbo].[industry_zone_indicators_monthly_wait_time]
-  where [metric_month] < ","'",monthly_trips_year_mon,"'", "
+  where [metric_month] < ",
+  "'",
+  monthly_trips_year_mon,
+  "'",
+  "
   order by [metric_month]
-")))
+"
+  )
+))
 
+
+# Shaping the data to display in the valueboxes and leaflet map Start --------------------
 average_waittime$metric_month <- ymd(average_waittime$metric_month)
 
 
@@ -916,17 +1006,23 @@ date_waittime1 <- max(average_waittime$metric_month)
 date_waittime2 <- date_waittime1 %m-% months(1)
 date_waittime3 <- date_waittime1 %m-% months(12)
 
-average_waittime_this_month <- average_waittime %>% dplyr::filter(metric_month == date_waittime1)
-average_waittime_last_month <- average_waittime %>% dplyr::filter(metric_month == date_waittime2)
-average_waittime_last_year <- average_waittime %>% dplyr::filter(metric_month == date_waittime3)
+average_waittime_this_month <-
+  average_waittime %>% dplyr::filter(metric_month == date_waittime1)
+average_waittime_last_month <-
+  average_waittime %>% dplyr::filter(metric_month == date_waittime2)
+average_waittime_last_year <-
+  average_waittime %>% dplyr::filter(metric_month == date_waittime3)
 
-average_waittime_all <- average_waittime %>% dplyr::group_by(metric_month, industry) %>% dplyr::summarise(avg_wait_time = mean(avg_wait_time))
+average_waittime_all <-
+  average_waittime %>% dplyr::group_by(metric_month, industry) %>% dplyr::summarise(avg_wait_time = mean(avg_wait_time))
 
 average_waittime_overview <- average_waittime_all
 
 average_waittime_overview$industry <- 'minutes'
-colnames(average_waittime_overview) <- c('year_mon', 'Metrics','value' )
-average_waittime_overview <- average_waittime_overview %>% dplyr::select(year_mon, Metrics, value)
+colnames(average_waittime_overview) <-
+  c('year_mon', 'Metrics', 'value')
+average_waittime_overview <-
+  average_waittime_overview %>% dplyr::select(year_mon, Metrics, value)
 
 
 
@@ -935,68 +1031,124 @@ colnames(average_waittime_last_month)[3] <- 'LocationID'
 colnames(average_waittime_last_year)[3] <- 'LocationID'
 
 
-ourShape201901@data <- left_join(ourShape201901@data, average_waittime_this_month)
-ourShape201902@data <- left_join(ourShape201902@data, average_waittime_last_month)
-ourShape201903@data <- left_join(ourShape201903@data, average_waittime_last_year)
+ourShape201901@data <-
+  left_join(ourShape201901@data, average_waittime_this_month)
+ourShape201902@data <-
+  left_join(ourShape201902@data, average_waittime_last_month)
+ourShape201903@data <-
+  left_join(ourShape201903@data, average_waittime_last_year)
 
 
 
-pal <- colorNumeric(palette = "YlOrRd", domain=range(2,14))
+pal <- colorNumeric(palette = "YlOrRd", domain = range(2, 14))
 
+# Shaping the data to display in the valueboxes and leaflet map End --------------------
 
-##HV locs----------------------------------------------------------------------
+# HV locs----------------------------------------------------------------------
 
 # Loading the shapefile three times into different variables
 ourShapeBoro <- raster::shapefile('data/shape/BoroughBoundaries.shp')
-ourShapeBoro_all <- raster::shapefile('data/shape/BoroughBoundaries.shp')
-ourShapeBoro_hv <- raster::shapefile('data/shape/BoroughBoundaries.shp')
-ourShapeBoro_med <- raster::shapefile('data/shape/BoroughBoundaries.shp')
-ourShapeBoro_shl <- raster::shapefile('data/shape/BoroughBoundaries.shp')
+ourShapeBoro_all <-
+  raster::shapefile('data/shape/BoroughBoundaries.shp')
+ourShapeBoro_hv <-
+  raster::shapefile('data/shape/BoroughBoundaries.shp')
+ourShapeBoro_med <-
+  raster::shapefile('data/shape/BoroughBoundaries.shp')
+ourShapeBoro_shl <-
+  raster::shapefile('data/shape/BoroughBoundaries.shp')
 
+
+# Extracting centroids for proper labels
 centers <- data.frame(gCentroid(ourShapeBoro, byid = TRUE))
 centers$boro_name <- ourShapeBoro$boro_name
 
-trips_by_borough <- setDT(sqlQuery(policy_con,paste0(
-"SELECT 
+# pulling trip data by location 
+trips_by_borough <- setDT(sqlQuery(
+  policy_con,
+  paste0(
+    "SELECT
       [metric_month]
       ,[industry]
       ,trips.[zone]
 
       ,[borough]
       ,[count_pickups]
-   
+
   FROM [TLC_PLCPRG_PRD].[dbo].[industry_zone_indicators_monthly_pickups] trips
-  
+
   inner join geography_lookup_zone loc
   ON trips.zone = loc.locationid
-  where [industry] in ('fhv_high_volume', 'yellow','green') and [metric_month] < ","'",monthly_trips_year_mon,"'", "
-")))
+  where [industry] in ('fhv_high_volume', 'yellow','green') and [metric_month] < ",
+  "'",
+  monthly_trips_year_mon,
+  "'",
+  "
+"
+  )
+))
 
+
+# Shaping the trip data by location to display on the map and valueboxes Start --------------------------
 trips_by_borough$metric_month <- ymd(trips_by_borough$metric_month)
 
-trips_by_borough <- trips_by_borough %>% dplyr::group_by(metric_month, industry, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups))
+trips_by_borough <-
+  trips_by_borough %>% dplyr::group_by(metric_month, industry, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups))
 
 date_by_borough <- max(trips_by_borough$metric_month)
 date_by_borough2 <- date_by_borough %m-% months(1)
 date_by_borough3 <- date_by_borough %m-% months(12)
 
-trips_by_borough_all <- trips_by_borough %>% dplyr::filter(metric_month %in% c(date_by_borough,date_by_borough2,date_by_borough3)) %>% dplyr::group_by(metric_month, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups))
+trips_by_borough_all <-
+  trips_by_borough %>% dplyr::filter(metric_month %in% c(date_by_borough, date_by_borough2, date_by_borough3)) %>% dplyr::group_by(metric_month, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups))
 
-trips_by_borough_all <- spread(trips_by_borough_all,metric_month,count_pickups)
+trips_by_borough_all <-
+  spread(trips_by_borough_all, metric_month, count_pickups)
 
-trips_by_borough_hv <- trips_by_borough %>% dplyr::filter(metric_month %in% c(date_by_borough,date_by_borough2,date_by_borough3), industry == 'fhv_high_volume') %>% dplyr::group_by(metric_month, industry, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups)) %>% spread(metric_month,count_pickups)
+trips_by_borough_hv <-
+  trips_by_borough %>% dplyr::filter(
+    metric_month %in% c(date_by_borough, date_by_borough2, date_by_borough3),
+    industry == 'fhv_high_volume'
+  ) %>% dplyr::group_by(metric_month, industry, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups)) %>% spread(metric_month, count_pickups)
 
-trips_by_borough_med <- trips_by_borough %>% dplyr::filter(metric_month %in% c(date_by_borough,date_by_borough2,date_by_borough3), industry == 'yellow') %>% dplyr::group_by(metric_month, industry, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups)) %>% spread(metric_month,count_pickups)
+trips_by_borough_med <-
+  trips_by_borough %>% dplyr::filter(
+    metric_month %in% c(date_by_borough, date_by_borough2, date_by_borough3),
+    industry == 'yellow'
+  ) %>% dplyr::group_by(metric_month, industry, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups)) %>% spread(metric_month, count_pickups)
 
-trips_by_borough_shl <- trips_by_borough %>% dplyr::filter(metric_month %in% c(date_by_borough,date_by_borough2,date_by_borough3), industry == 'green') %>% dplyr::group_by(metric_month, industry, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups)) %>% spread(metric_month,count_pickups)
+trips_by_borough_shl <-
+  trips_by_borough %>% dplyr::filter(
+    metric_month %in% c(date_by_borough, date_by_borough2, date_by_borough3),
+    industry == 'green'
+  ) %>% dplyr::group_by(metric_month, industry, borough) %>% dplyr::summarise(count_pickups = sum(count_pickups)) %>% spread(metric_month, count_pickups)
 
 
-colnames(trips_by_borough_all) <- c('boro_name', 'last_year','last_month','this_month')
-colnames(trips_by_borough_hv) <- c('industry','boro_name', 'last_year','last_month','this_month')
-colnames(trips_by_borough_med) <- c('industry','boro_name', 'last_year','last_month','this_month')
-colnames(trips_by_borough_shl) <- c('industry','boro_name', 'last_year','last_month','this_month')
-###############################################################
+colnames(trips_by_borough_all) <-
+  c('boro_name', 'last_year', 'last_month', 'this_month')
+colnames(trips_by_borough_hv) <-
+  c('industry',
+    'boro_name',
+    'last_year',
+    'last_month',
+    'this_month')
+colnames(trips_by_borough_med) <-
+  c('industry',
+    'boro_name',
+    'last_year',
+    'last_month',
+    'this_month')
+colnames(trips_by_borough_shl) <-
+  c('industry',
+    'boro_name',
+    'last_year',
+    'last_month',
+    'this_month')
 
+# Shaping the trip data by location to display on the map and valueboxes End --------------------------
+
+
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons Start--------------------------------
 
 valuebox_function_boro <- function(data, box_name, icon_name, box_color,intro ){
   # data ex data = industries_filtered, industry = 'yellow'  
@@ -1028,22 +1180,17 @@ valuebox_function_boro <- function(data, box_name, icon_name, box_color,intro ){
                   
 
   caption_fin <- paste0(intro, one,two,three,four,five)
-  # 
-  
-  # 
-  # 
-  # 
-  # # box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
+
    return(valueBox(box_name, caption = caption_fin, icon=icon_name, color = box_color))
   
 }
 
-
-####################################################################################
-
-
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons End--------------------------------
 
 
+
+# Prepping trip data to be display on the leaflet map Start ---------------------------
 
 ourShapeBoro_all@data <- left_join(ourShapeBoro@data, trips_by_borough_all)
 ourShapeBoro_hv@data <- left_join(ourShapeBoro@data, trips_by_borough_hv)
@@ -1069,60 +1216,59 @@ pal_trips_hv <- colorNumeric(palette = "GnBu", domain=ourShapeBoro_hv@data$this_
 pal_trips_med <- colorNumeric(palette = "GnBu", domain=ourShapeBoro_med@data$this_month)
 pal_trips_shl <- colorNumeric(palette = "GnBu", domain=ourShapeBoro_shl@data$this_month)
 
+# Prepping trip data to be display on the leaflet map End ---------------------------
 
-##HV locs----------------------------------------------------------------------
 
 
+# LL31 Data----------------------------------------------------------------------
+
+
+# Reading the ll31 data locally, removing cols and melting for rendering Start -------------
 data_exl <- read_excel("data/local_law_31.xlsx")
-data_exl <- data_exl[-c(1:4),-c(2:19)]
-library(janitor)
+data_exl <- data_exl[-c(1:4), -c(2:19)]
+
 data_exl <- data_exl %>%
   row_to_names(row_number = 1)
 
-data_exl <- data_exl[-c(1,3, 12,14,16,25,27,29,38,40,42,51,53,54),]
+data_exl <- data_exl[-c(1, 3, 12, 14, 16, 25, 27, 29, 38, 40, 42, 51, 53, 54), ]
 colnames(data_exl)[1] <- 'category'
 
-data_exl <- data_exl[-c(10,20,30,40),]
-crashes_data <- data.table::melt(setDT(data_exl), id.vars = "category", variable.name = "year_mon")
+data_exl <- data_exl[-c(10, 20, 30, 40), ]
+crashes_data <-
+  data.table::melt(setDT(data_exl),
+                   id.vars = "category",
+                   variable.name = "year_mon")
 crashes_data$year_mon <- lubridate::my(crashes_data$year_mon)
 
 
-
-## Crashes-------------------------------------------------------------
-# myfile <- tempfile()
-#   download.file(
-#     "https://www1.nyc.gov/assets/tlc/downloads/excel/local_law_31.xlsx",
-#     myfile,
-#     mode = "wb"
-#   )
-# 
-# 
-# data_exl <- read_excel(myfile)
 data_exl <- read_excel("data/local_law_31.xlsx")
-data_exl <- data_exl[-c(1:4),-c(2:19)]
+data_exl <- data_exl[-c(1:4), -c(2:19)]
 
 data_exl <- data_exl %>%
   row_to_names(row_number = 1)
 
-data_exl <- data_exl[-c(1,3, 12,14,16,25,27,29,38,40,42,51,53,54),]
+data_exl <- data_exl[-c(1, 3, 12, 14, 16, 25, 27, 29, 38, 40, 42, 51, 53, 54), ]
 colnames(data_exl)[1] <- 'category'
 
-data_totals <- data_exl[c(10,20,30,40),]
+data_totals <- data_exl[c(10, 20, 30, 40), ]
 data_totals$category[1] <- 'total crashes'
 data_totals$category[2] <- 'total injuries'
 data_totals$category[3] <- 'total critical injuries'
 data_totals$category[4] <- 'total fatalities'
 
 
-data_totals <- data.table::melt(setDT(data_totals), id.vars = "category", variable.name = "year_mon")
+data_totals <-
+  data.table::melt(setDT(data_totals),
+                   id.vars = "category",
+                   variable.name = "year_mon")
 data_totals$year_mon <- lubridate::my(data_totals$year_mon)
 data_totals$value <- as.numeric(data_totals$value)
-#data_totals <- data_totals[data_totals$year_mon < monthly_trips_year_mon,]
-crash_date1 <- max(data_totals$year_mon, na.rm=T)
+
+crash_date1 <- max(data_totals$year_mon, na.rm = T)
 crash_date2 <- crash_date1 %m-% months(1)
 crash_date3 <- crash_date1 %m-% months(12)
 
-  
+# Reading the ll31 data locally, removing cols and melting for rendering End ------------- 
 
 valuebox_function_crashes <- function(data,industry_name, box_name, icon_name, box_color ){
 # data ex data = industries_filtered, industry = 'yellow'  
@@ -1148,115 +1294,204 @@ else if(yellow_now$value[3] > yellow_now$value[1]){
 }
   
 
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons Start--------------------------------  
   
-captionn <- paste0("There were ",span(format(yellow_now$value[3], big.mark = ','),style = 'font-size:21px; font-weight:bold')," ",industry_name," in ",format(yellow_now$year_mon[3],"%B %Y"),", which is a ",span(paste0(abs(round((ifelse(yellow_now$value[2] == 0,(yellow_now$value[3] - yellow_now$value[2]),(yellow_now$value[3] - yellow_now$value[2])/yellow_now$value[2])) * 100, 1)),"% ",month_to_month), style=paste0("color:",ifelse(month_to_month == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_mon[2]),"%B %Y")," and ",span(paste0(abs(round((ifelse(yellow_now$value[1] == 0, (yellow_now$value[3] - yellow_now$value[1]), (yellow_now$value[3] - yellow_now$value[1])/yellow_now$value[1]))*100,1)),"% ",year_to_year), style=paste0("color:",ifelse(year_to_year == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_mon[1],"%B %Y"),".")
-
-
-
-
-# box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
-return(valueBox(box_name, caption = captionn, icon=icon_name, color = box_color))
+  
+  captionn <-
+    paste0(
+      "There were ",
+      span(format(yellow_now$value[3], big.mark = ','), style = 'font-size:21px; font-weight:bold'),
+      " ",
+      industry_name,
+      " in ",
+      format(yellow_now$year_mon[3], "%B %Y"),
+      ", which is a ",
+      span(
+        paste0(abs(round((
+          ifelse(
+            yellow_now$value[2] == 0,
+            (yellow_now$value[3] - yellow_now$value[2]),
+            (yellow_now$value[3] - yellow_now$value[2]) / yellow_now$value[2]
+          )
+        ) * 100, 1)), "% ", month_to_month),
+        style = paste0(
+          "color:",
+          ifelse(month_to_month == 'increase', '#05b705', '#ff5520'),
+          ";font-size:21px; font-weight:bold"
+        )
+      ),
+      " compared to ",
+      format(ymd(yellow_now$year_mon[2]), "%B %Y"),
+      " and ",
+      span(
+        paste0(abs(round((
+          ifelse(
+            yellow_now$value[1] == 0,
+            (yellow_now$value[3] - yellow_now$value[1]),
+            (yellow_now$value[3] - yellow_now$value[1]) / yellow_now$value[1]
+          )
+        ) * 100, 1)), "% ", year_to_year),
+        style = paste0(
+          "color:",
+          ifelse(year_to_year == 'increase', '#05b705', '#ff5520'),
+          ";font-size:21px; font-weight:bold"
+        )
+      ),
+      " compared to ",
+      format(yellow_now$year_mon[1], "%B %Y"),
+      "."
+    )
+  
+  
+  
+  
+  # box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
+  return(valueBox(
+    box_name,
+    caption = captionn,
+    icon = icon_name,
+    color = box_color
+  ))
   
 }
 
 
-
-
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons End--------------------------------
 
 
 data_exl <- data_exl[-c(10,20,30,40),]
 
+
+# Mergin crashes with vehicle infor from the industry indicators ---------------------
+
 #industry_indicators_data_veh <- fread('https://www1.nyc.gov/assets/tlc/downloads/csv/data_reports_monthly.csv')
 
+# Reading the data again
 
-industry_indicators_data_veh <- fread('data/data_reports_monthly_09_28_2022.csv')
+industry_indicators_data_veh <-
+  fread('data/data_reports_monthly_09_28_2022.csv')
 
-vehs <- industry_indicators_data_veh[,c(1,2,6)]
+# Reshaping and renaming
+vehs <- industry_indicators_data_veh[, c(1, 2, 6)]
 vehs$year_mon <- lubridate::ym(vehs$`Month/Year`)
-vehs <- setDT(vehs)[`License Class` == 'Yellow', 
-                    lic_no:='medallion'][`License Class` == 'FHV - High Volume',
-                                         lic_no:='fhv'][`License Class` == 'Green',
-                                                        lic_no:='shl'][`License Class` == 'FHV - Black Car',
-                                                                       lic_no:='fhv'][`License Class` == 'FHV - Livery',
-                                                                                      lic_no:='fhv'][`License Class` == 'FHV - Lux Limo',
-                                                                                                     lic_no:='fhv']
-vehs$`Unique Vehicles` <- as.numeric(gsub(",", "", vehs$`Unique Vehicles`))
-vehs <- vehs %>% dplyr::group_by(year_mon, lic_no) %>% dplyr::summarise(vehicles = sum(as.numeric(`Unique Vehicles`)))
+vehs <- setDT(vehs)[`License Class` == 'Yellow',
+                    lic_no := 'medallion'][`License Class` == 'FHV - High Volume',
+                                           lic_no := 'fhv'][`License Class` == 'Green',
+                                                            lic_no := 'shl'][`License Class` == 'FHV - Black Car',
+                                                                             lic_no :=
+                                                                               'fhv'][`License Class` == 'FHV - Livery',
+                                                                                      lic_no :=
+                                                                                        'fhv'][`License Class` == 'FHV - Lux Limo',
+                                                                                               lic_no :=
+                                                                                                 'fhv']
+vehs$`Unique Vehicles` <-
+  as.numeric(gsub(",", "", vehs$`Unique Vehicles`))
+vehs <-
+  vehs %>% dplyr::group_by(year_mon, lic_no) %>% dplyr::summarise(vehicles = sum(as.numeric(`Unique Vehicles`)))
 colnames(vehs)[2] <- 'category'
 
 
-filter_crashes = function(start, end, type){
-  
 
+# This functions megers crashes with vehicle types and normalizes the data Start ------------
+filter_crashes = function(start, end, type) {
+  all_crashes <- setDT(data_exl)[c(start:end), ]
+  all_crashes$category <-
+    c(
+      'total_crashes',
+      'medallion',
+      'shl',
+      'unknown',
+      'fhv',
+      'fhv',
+      'fhv',
+      'van',
+      'paratransit'
+    )
   
-  all_crashes <- setDT(data_exl)[c(start:end),]
-  all_crashes$category <- c('total_crashes', 'medallion','shl','unknown','fhv','fhv','fhv','van','paratransit')
-  
-  all_crashes <- data.table::melt(setDT(all_crashes), id.vars = "category", variable.name = "year_mon")
+  all_crashes <-
+    data.table::melt(setDT(all_crashes),
+                     id.vars = "category",
+                     variable.name = "year_mon")
   all_crashes$year_mon <- lubridate::my(all_crashes$year_mon)
-  all_crashes <- all_crashes %>% dplyr::group_by(category,year_mon) %>% dplyr::summarise(total_crashes = sum(as.numeric(value))) %>% dplyr::left_join(vehs)
+  all_crashes <-
+    all_crashes %>% dplyr::group_by(category, year_mon) %>% dplyr::summarise(total_crashes = sum(as.numeric(value))) %>% dplyr::left_join(vehs)
   
-  all_crashes_known <- all_crashes %>% dplyr::filter(category %in% c('fhv', 'medallion', 'shl'))
+  all_crashes_known <-
+    all_crashes %>% dplyr::filter(category %in% c('fhv', 'medallion', 'shl'))
   
   #all_crashes_known <- setDT(all_crashes_known)[category == 'van', vehicles:=170][category == 'paratransit', vehicles:=190]
   
-  all_crashes_known$crash_per_100 <- (all_crashes_known$total_crashes/all_crashes_known$vehicles) * 10000
+  all_crashes_known$crash_per_100 <-
+    (all_crashes_known$total_crashes / all_crashes_known$vehicles) * 10000
   
-    if (type %in% c('fatal','critical')){
-      
-          all_crashes_known_total <- all_crashes_known %>% dplyr::group_by(year_mon) %>% dplyr::summarise(total_crashes = sum(total_crashes))
-  
-  all_crashes_known_average <- all_crashes_known %>% dplyr::filter(crash_per_100 > 0) %>% dplyr::group_by(category) %>% dplyr::summarise(crash_per_100 = round(mean(crash_per_100, ),1))
-  
-  return(list(all_crashes_known, all_crashes_known_average,all_crashes_known_total))
+  if (type %in% c('fatal', 'critical')) {
+    all_crashes_known_total <-
+      all_crashes_known %>% dplyr::group_by(year_mon) %>% dplyr::summarise(total_crashes = sum(total_crashes))
+    
+    all_crashes_known_average <-
+      all_crashes_known %>% dplyr::filter(crash_per_100 > 0) %>% dplyr::group_by(category) %>% dplyr::summarise(crash_per_100 = round(mean(crash_per_100,), 1))
+    
+    return(list(
+      all_crashes_known,
+      all_crashes_known_average,
+      all_crashes_known_total
+    ))
     
   } else {
+    all_crashes_known_average <-
+      all_crashes_known %>% dplyr::filter(crash_per_100 > 0) %>% dplyr::group_by(category) %>% dplyr::summarise(crash_per_100 = round(mean(crash_per_100,), 1))
     
- 
-  
-  all_crashes_known_average <- all_crashes_known %>% dplyr::filter(crash_per_100 > 0) %>% dplyr::group_by(category) %>% dplyr::summarise(crash_per_100 = round(mean(crash_per_100, ),1))
-  
-  return(list(all_crashes_known, all_crashes_known_average))
+    return(list(all_crashes_known, all_crashes_known_average))
   }
 }
 
-all_crashes = filter_crashes(1,9,'test')
+
+# This functions megers crashes with vehicle types and normalizes the data Start ------------
+
+# Applying the function to the data Start --------------------------
+
+all_crashes = filter_crashes(1, 9, 'test')
 
 all_crashes_known <- all_crashes[[1]]
 
 all_crashes_known_average <- all_crashes[[2]]
 
-all_crashes = filter_crashes(10,18,'test')
+all_crashes = filter_crashes(10, 18, 'test')
 
 all_crashes_injuries <- all_crashes[[1]]
 
 all_crashes_injuries_average <- all_crashes[[2]]
 
-all_crashes = filter_crashes(19,27,'critical')
+all_crashes = filter_crashes(19, 27, 'critical')
 
 all_crashes_critical <- all_crashes[[1]]
-all_crashes_critical <- all_crashes_critical[!is.na(all_crashes_critical$year_mon),]
+all_crashes_critical <-
+  all_crashes_critical[!is.na(all_crashes_critical$year_mon), ]
 
 all_crashes_critical_average <- all_crashes[[2]]
 all_crashes_critical_total <- all_crashes[[3]]
 
-all_crashes = filter_crashes(28,36,'fatal')
+all_crashes = filter_crashes(28, 36, 'fatal')
 
 all_crashes_fatal <- all_crashes[[1]]
-all_crashes_fatal <- all_crashes_fatal[!is.na(all_crashes_fatal$year_mon),]
+all_crashes_fatal <-
+  all_crashes_fatal[!is.na(all_crashes_fatal$year_mon), ]
 
 all_crashes_fatal_average <- all_crashes[[2]]
 
 all_crashes_fatal_total <- all_crashes[[3]]
-
-
-## Crashes-------------------------------------------------------------
+# Applying the function to the data End --------------------------
 
 
 
+## Vision Zero -------------------------------------------------------------
+
+# Pulling the Vision Zero data
 vz_data <- read.csv('I:\\COF\\COF\\MMR\\Vision Zero Metrics\\Ops Metrics Tracker\\vision_zero_master/vz_data.csv')
 
-
+# Fixing data Start ----------------------------------
 vz_data <- vz_data[-c(1,3,4,7:12, 23:26),-ncol(vz_data)]
 
 vz_data <- vz_data %>%
@@ -1276,193 +1511,460 @@ vz_data$Metrics[10] <- 'improper passing'
 vz_data$Metrics[11] <- 'wrong direction'
 vz_data$Metrics[12] <- 'other'
 
+# Fixing data End ----------------------------------
 
 
 
-vz_data <- data.table::melt(setDT(vz_data), id.vars = "Metrics", variable.name = "year_mon")
+# Shaping the data to be rendered as value boxes Start ----------------
+vz_data <-
+  data.table::melt(setDT(vz_data), id.vars = "Metrics", variable.name = "year_mon")
 vz_data$year_mon <- lubridate::my(vz_data$year_mon)
 
-vz_data_ed <- vz_data[vz_data$Metrics == 'completed_education',]
-vz_data_total <- vz_data[vz_data$Metrics == 'total violations',]
-vz_data <- vz_data[!vz_data$Metrics %in% c('total violations','completed_education'),]
+vz_data_ed <- vz_data[vz_data$Metrics == 'completed_education', ]
+vz_data_total <- vz_data[vz_data$Metrics == 'total violations', ]
+vz_data <-
+  vz_data[!vz_data$Metrics %in% c('total violations', 'completed_education'), ]
 
 
 vz_data_ed$value <- as.numeric(gsub(",", "", vz_data_ed$value))
-vz_data_total$value <- as.numeric(gsub(",", "", vz_data_total$value))
+vz_data_total$value <-
+  as.numeric(gsub(",", "", vz_data_total$value))
 vz_data$value <- as.numeric(gsub(",", "", vz_data$value))
 
 vz_date1 <- max(vz_data_total$year_mon)
 vz_date2 <- vz_date1 %m-% months(1)
 vz_date3 <- vz_date1 %m-% months(12)
 
+# Shaping the data to be rendered as value boxes End ----------------
 
 
-valuebox_function_vz <- function(data,industry_name, box_name, icon_name, box_color ){
-# data ex data = industries_filtered, industry = 'yellow'  
-  yellow_now <- data %>% dplyr::filter(Metrics == industry_name, year_mon %in% c(vz_date1,vz_date2,vz_date3)) %>% dplyr::arrange(year_mon)
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons Start -------------------------------
 
-  if(yellow_now$value[3] == yellow_now$value[1]) {
-    month_to_month <- 'change'
-  }
-else if(yellow_now$value[3] > yellow_now$value[2]){
-  month_to_month <- 'increase'
-} else {
-  month_to_month <- 'decrease'
-}
-
-
-    if(yellow_now$value[3] == yellow_now$value[1]) {
-    year_to_year <- 'change'
-  }
-else if(yellow_now$value[3] > yellow_now$value[1]){
-  year_to_year <- 'increase'
-} else {
-  year_to_year <- 'decrease'
-}
-  
-
-  
-captionn <- paste0("There was (were) ",span(format(yellow_now$value[3], big.mark = ','),style = 'font-size:21px; font-weight:bold')," ",industry_name," violation(s) in ",format(yellow_now$year_mon[3],"%B %Y"),", which is a ",span(paste0(abs(round((ifelse(yellow_now$value[2] == 0,(yellow_now$value[3] - yellow_now$value[2]),(yellow_now$value[3] - yellow_now$value[2])/yellow_now$value[2])) * 100, 1)),"% ",month_to_month), style=paste0("color:",ifelse(month_to_month == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_mon[2]),"%B %Y")," and ",span(paste0(abs(round((ifelse(yellow_now$value[1] == 0, (yellow_now$value[3] - yellow_now$value[1]), (yellow_now$value[3] - yellow_now$value[1])/yellow_now$value[1]))*100,1)),"% ",year_to_year), style=paste0("color:",ifelse(year_to_year == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_mon[1],"%B %Y"),".")
-
-
-
-
-# box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
-return(valueBox(box_name, caption = captionn, icon=icon_name, color = box_color))
-  
-}
-
-
-
-
-
-
-
-#overview--------------------------------------------------------
-
-valuebox_function_overview <- function(data,industry_name, box_name, icon_name, box_color, date1,date2,date3,intro ){
-# data ex data = industries_filtered, industry = 'yellow'  
-  yellow_now <- data %>% dplyr::filter(Metrics == industry_name, year_mon %in% c(date1,date2,date3)) %>% dplyr::arrange(year_mon)
-
-if(yellow_now$value[3] > yellow_now$value[2]){
-  month_to_month <- 'increase'
-} else {
-  month_to_month <- 'decrease'
-}
-
-if(yellow_now$value[3] > yellow_now$value[1]){
-  year_to_year <- 'increase'
-} else {
-  year_to_year <- 'decrease'
-}
-  
-wt = 'The average wait time for HVFHV was '
-  
-captionn <- paste0(intro, br(),ifelse(box_name =="Wait Times",wt,''),span(format(round(yellow_now$value[3],1), big.mark = ','),style = 'font-size:21px; font-weight:bold')," ",industry_name," in ",format(yellow_now$year_mon[3],"%B %Y"),", which is a ",span(paste0(abs(round(((yellow_now$value[3] - yellow_now$value[2])/yellow_now$value[2]) * 100, 1)),"% ",month_to_month), style=paste0("color:",ifelse(month_to_month == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_mon[2]),"%B %Y")," and ",span(paste0(abs(round(((yellow_now$value[3] - yellow_now$value[1])/yellow_now$value[1])*100,1)),"% ",year_to_year), style=paste0("color:",ifelse(year_to_year == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_mon[1],"%B %Y"),".")
-
-
-
-
-# box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
-return(valueBox(box_name, caption = captionn, icon=icon_name, color = box_color))
-  
-}
-
-
-
-
-valuebox_function_crashes_overview <- function(data,industry_name, box_name, icon_name, box_color, intro ){
-# data ex data = industries_filtered, industry = 'yellow'  
-  yellow_now <- data %>% dplyr::filter(category == industry_name, year_mon %in% c(crash_date1,crash_date2,crash_date3)) %>% dplyr::arrange(year_mon)
-
-if(yellow_now$value[3] > yellow_now$value[2]){
-  month_to_month <- 'increase'
-} else {
-  month_to_month <- 'decrease'
-}
-
-if(yellow_now$value[3] > yellow_now$value[1]){
-  year_to_year <- 'increase'
-} else {
-  year_to_year <- 'decrease'
-}
-  
-
-  
-captionn <- paste0(intro, br(),"There were ",span(format(yellow_now$value[3], big.mark = ','),style = 'font-size:21px; font-weight:bold')," total crashes in ",format(yellow_now$year_mon[3],"%B %Y"),", which is a ",span(paste0(abs(round(((yellow_now$value[3] - yellow_now$value[2])/yellow_now$value[2]) * 100, 1)),"% ",month_to_month), style=paste0("color:",ifelse(month_to_month == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_mon[2]),"%B %Y")," and ",span(paste0(abs(round(((yellow_now$value[3] - yellow_now$value[1])/yellow_now$value[1])*100,1)),"% ",year_to_year), style=paste0("color:",ifelse(year_to_year == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_mon[1],"%B %Y"),".")
-
-
-
-
-# box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
-return(valueBox(box_name, caption = captionn, icon=icon_name, color = box_color))
-  
-}
-
-
-
-
-
-valuebox_function_indicators_overview <- function(data,industry_name, box_name, icon_name, box_color, intro){
-  
-  
-  
-  
-  
-  # data ex data = industries_filtered, industry = 'yellow'  
-  colnames(data)[1] <- 'year_month' 
-  data$company <- 'all'
-  
-  
-  yellow_now <- data %>% dplyr::filter(company == industry_name, year_month %in% c(ind_date1,ind_date2,ind_date3)) %>% dplyr::arrange(year_month)
-  
-  setDT(yellow_now)
-  
-  #print(setDT(yellow_now)[,trips][1])
-  
-  
-  inc_dec <- function(one){
+valuebox_function_vz <-
+  function(data,
+           industry_name,
+           box_name,
+           icon_name,
+           box_color) {
+    # data ex data = industries_filtered, industry = 'yellow'
+    yellow_now <-
+      data %>% dplyr::filter(Metrics == industry_name,
+                             year_mon %in% c(vz_date1, vz_date2, vz_date3)) %>% dplyr::arrange(year_mon)
     
-    if(yellow_now[[one]][3] > yellow_now[[one]][2]){
+    if (yellow_now$value[3] == yellow_now$value[1]) {
+      month_to_month <- 'change'
+    }
+    else if (yellow_now$value[3] > yellow_now$value[2]) {
       month_to_month <- 'increase'
     } else {
       month_to_month <- 'decrease'
     }
     
-    if(yellow_now[[one]][3] > yellow_now[[one]][1]){
+    
+    if (yellow_now$value[3] == yellow_now$value[1]) {
+      year_to_year <- 'change'
+    }
+    else if (yellow_now$value[3] > yellow_now$value[1]) {
       year_to_year <- 'increase'
     } else {
       year_to_year <- 'decrease'
     }
     
-    return(list(month_to_month, year_to_year))
+    
+    
+    captionn <-
+      paste0(
+        "There was (were) ",
+        span(format(yellow_now$value[3], big.mark = ','), style = 'font-size:21px; font-weight:bold'),
+        " ",
+        industry_name,
+        " violation(s) in ",
+        format(yellow_now$year_mon[3], "%B %Y"),
+        ", which is a ",
+        span(
+          paste0(abs(round((
+            ifelse(
+              yellow_now$value[2] == 0,
+              (yellow_now$value[3] - yellow_now$value[2]),
+              (yellow_now$value[3] - yellow_now$value[2]) / yellow_now$value[2]
+            )
+          ) * 100, 1)), "% ", month_to_month),
+          style = paste0(
+            "color:",
+            ifelse(month_to_month == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(ymd(yellow_now$year_mon[2]), "%B %Y"),
+        " and ",
+        span(
+          paste0(abs(round((
+            ifelse(
+              yellow_now$value[1] == 0,
+              (yellow_now$value[3] - yellow_now$value[1]),
+              (yellow_now$value[3] - yellow_now$value[1]) / yellow_now$value[1]
+            )
+          ) * 100, 1)), "% ", year_to_year),
+          style = paste0(
+            "color:",
+            ifelse(year_to_year == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(yellow_now$year_mon[1], "%B %Y"),
+        "."
+      )
+    
+    
+    
+    
+    # box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
+    return(valueBox(
+      box_name,
+      caption = captionn,
+      icon = icon_name,
+      color = box_color
+    ))
     
   }
-  
-  
-
-  
-  
 
 
-  capt1 <- paste0(intro, br(),"Total daily trips (Traditional FHV excluded): ",span(format(yellow_now[[2]][3], big.mark = ','),style = 'font-size:21px; font-weight:bold')," in ",format(yellow_now$year_month[3],"%B %Y"),", which is a ",span(paste0(abs(round(((yellow_now[[2]][3] - yellow_now[[2]][2])/yellow_now[[2]][2]) * 100, 1)),"% ",inc_dec(2)[1]), style=paste0("color:",ifelse(inc_dec(2)[1] == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_month[2]),"%B %Y")," and ",span(paste0(abs(round(((yellow_now[[2]][3] - yellow_now[[2]][1])/yellow_now[[2]][1])*100,1)),"% ",inc_dec(2)[2]), style=paste0("color:",ifelse(inc_dec(2)[2] == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_month[1],"%B %Y"),".",br(),
-                  "Total unique vehicles (Traditional FHV excluded): ",span(format(yellow_now[[3]][3], big.mark = ','),style = 'font-size:21px; font-weight:bold')," in ",format(yellow_now$year_month[3],"%B %Y"),", which is a ",span(paste0(abs(round(((yellow_now[[3]][3] - yellow_now[[3]][2])/yellow_now[[3]][2]) * 100, 1)),"% ",inc_dec(3)[1]), style=paste0("color:",ifelse(inc_dec(3)[1] == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_month[2]),"%B %Y")," and ",span(paste0(abs(round(((yellow_now[[3]][3] - yellow_now[[3]][1])/yellow_now[[3]][1])*100,1)),"% ",inc_dec(3)[2]), style=paste0("color:",ifelse(inc_dec(3)[2] == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_month[1],"%B %Y"),".",br(),
-                  "Total unique drivers (Traditional FHV excluded): ",span(format(yellow_now[[4]][3], big.mark = ','),style = 'font-size:21px; font-weight:bold')," in ",format(yellow_now$year_month[3],"%B %Y"),", which is a ",span(paste0(abs(round(((yellow_now[[4]][3] - yellow_now[[4]][2])/yellow_now[[4]][2]) * 100, 1)),"% ",inc_dec(4)[1]), style=paste0("color:",ifelse(inc_dec(4)[1] == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(ymd(yellow_now$year_month[2]),"%B %Y")," and ",span(paste0(abs(round(((yellow_now[[4]][3] - yellow_now[[4]][1])/yellow_now[[4]][1])*100,1)),"% ",inc_dec(4)[2]), style=paste0("color:",ifelse(inc_dec(4)[2] == 'increase','#05b705','#ff5520'),";font-size:21px; font-weight:bold" ))," compared to ",format(yellow_now$year_month[1],"%B %Y"),"."
+# This function generates conditional valueboxes depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons End -------------------------------
 
 
 
 
-  )
-  
-  
-  
-  
-  # box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
-  return(valueBox(box_name, caption = capt1, icon=icon_name, color = box_color))
-  
-}
+# overview--------------------------------------------------------
 
 
+
+# This function generates conditional valueboxes for the WaitTimes Dashboard depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons Start -------------------------------
+
+valuebox_function_overview <-
+  function(data,
+           industry_name,
+           box_name,
+           icon_name,
+           box_color,
+           date1,
+           date2,
+           date3,
+           intro) {
+    # data ex data = industries_filtered, industry = 'yellow'
+    yellow_now <-
+      data %>% dplyr::filter(Metrics == industry_name, year_mon %in% c(date1, date2, date3)) %>% dplyr::arrange(year_mon)
+    
+    if (yellow_now$value[3] > yellow_now$value[2]) {
+      month_to_month <- 'increase'
+    } else {
+      month_to_month <- 'decrease'
+    }
+    
+    if (yellow_now$value[3] > yellow_now$value[1]) {
+      year_to_year <- 'increase'
+    } else {
+      year_to_year <- 'decrease'
+    }
+    
+    wt = 'The average wait time for HVFHV was '
+    
+    captionn <-
+      paste0(
+        intro,
+        br(),
+        ifelse(box_name == "Wait Times", wt, ''),
+        span(format(round(
+          yellow_now$value[3], 1
+        ), big.mark = ','), style = 'font-size:21px; font-weight:bold'),
+        " ",
+        industry_name,
+        " in ",
+        format(yellow_now$year_mon[3], "%B %Y"),
+        ", which is a ",
+        span(
+          paste0(abs(round(((yellow_now$value[3] - yellow_now$value[2]) / yellow_now$value[2]) * 100, 1
+          )), "% ", month_to_month),
+          style = paste0(
+            "color:",
+            ifelse(month_to_month == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(ymd(yellow_now$year_mon[2]), "%B %Y"),
+        " and ",
+        span(
+          paste0(abs(round(((yellow_now$value[3] - yellow_now$value[1]) / yellow_now$value[1]) *
+                             100, 1
+          )), "% ", year_to_year),
+          style = paste0(
+            "color:",
+            ifelse(year_to_year == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(yellow_now$year_mon[1], "%B %Y"),
+        "."
+      )
+    
+    
+    
+    
+    # box_name = 'Medallion', icon_name = "fas fa-car", box_color = 'yellow'
+    return(valueBox(
+      box_name,
+      caption = captionn,
+      icon = icon_name,
+      color = box_color
+    ))
+    
+  }
+
+# This function generates conditional valueboxes for the WaitTimes Dashboard depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons End -------------------------------
+
+
+
+# This function generates conditional valueboxes for the LL31 overview frontpage part depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons Start -------------------------------
+
+valuebox_function_crashes_overview <-
+  function(data,
+           industry_name,
+           box_name,
+           icon_name,
+           box_color,
+           intro) {
+    # data ex data = industries_filtered, industry = 'yellow'
+    yellow_now <-
+      data %>% dplyr::filter(category == industry_name,
+                             year_mon %in% c(crash_date1, crash_date2, crash_date3)) %>% dplyr::arrange(year_mon)
+    
+    if (yellow_now$value[3] > yellow_now$value[2]) {
+      month_to_month <- 'increase'
+    } else {
+      month_to_month <- 'decrease'
+    }
+    
+    if (yellow_now$value[3] > yellow_now$value[1]) {
+      year_to_year <- 'increase'
+    } else {
+      year_to_year <- 'decrease'
+    }
+    
+    
+    
+    captionn <-
+      paste0(
+        intro,
+        br(),
+        "There were ",
+        span(format(yellow_now$value[3], big.mark = ','), style = 'font-size:21px; font-weight:bold'),
+        " total crashes in ",
+        format(yellow_now$year_mon[3], "%B %Y"),
+        ", which is a ",
+        span(
+          paste0(abs(round(((yellow_now$value[3] - yellow_now$value[2]) / yellow_now$value[2]) * 100, 1
+          )), "% ", month_to_month),
+          style = paste0(
+            "color:",
+            ifelse(month_to_month == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(ymd(yellow_now$year_mon[2]), "%B %Y"),
+        " and ",
+        span(
+          paste0(abs(round(((yellow_now$value[3] - yellow_now$value[1]) / yellow_now$value[1]) *
+                             100, 1
+          )), "% ", year_to_year),
+          style = paste0(
+            "color:",
+            ifelse(year_to_year == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(yellow_now$year_mon[1], "%B %Y"),
+        "."
+      )
+
+    return(valueBox(
+      box_name,
+      caption = captionn,
+      icon = icon_name,
+      color = box_color
+    ))
+    
+  }
+
+ # This function generates conditional valueboxes for the LL31 overview frontpage part depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons End -------------------------------  
+
+
+ # This function generates conditional valueboxes for the industry inds depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons Start -------------------------------  
+
+valuebox_function_indicators_overview <-
+  function(data,
+           industry_name,
+           box_name,
+           icon_name,
+           box_color,
+           intro) {
+    # data ex data = industries_filtered, industry = 'yellow'
+    colnames(data)[1] <- 'year_month'
+    data$company <- 'all'
+    
+    
+    yellow_now <-
+      data %>% dplyr::filter(company == industry_name,
+                             year_month %in% c(ind_date1, ind_date2, ind_date3)) %>% dplyr::arrange(year_month)
+    
+    setDT(yellow_now)
+    
+    #print(setDT(yellow_now)[,trips][1])
+    
+    
+    inc_dec <- function(one) {
+      if (yellow_now[[one]][3] > yellow_now[[one]][2]) {
+        month_to_month <- 'increase'
+      } else {
+        month_to_month <- 'decrease'
+      }
+      
+      if (yellow_now[[one]][3] > yellow_now[[one]][1]) {
+        year_to_year <- 'increase'
+      } else {
+        year_to_year <- 'decrease'
+      }
+      
+      return(list(month_to_month, year_to_year))
+      
+    }
+    
+    
+    capt1 <-
+      paste0(
+        intro,
+        br(),
+        "Total daily trips (Traditional FHV excluded): ",
+        span(format(yellow_now[[2]][3], big.mark = ','), style = 'font-size:21px; font-weight:bold'),
+        " in ",
+        format(yellow_now$year_month[3], "%B %Y"),
+        ", which is a ",
+        span(
+          paste0(abs(round(((yellow_now[[2]][3] - yellow_now[[2]][2]) / yellow_now[[2]][2]) * 100, 1
+          )), "% ", inc_dec(2)[1]),
+          style = paste0(
+            "color:",
+            ifelse(inc_dec(2)[1] == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(ymd(yellow_now$year_month[2]), "%B %Y"),
+        " and ",
+        span(
+          paste0(abs(round(((yellow_now[[2]][3] - yellow_now[[2]][1]) / yellow_now[[2]][1]) *
+                             100, 1
+          )), "% ", inc_dec(2)[2]),
+          style = paste0(
+            "color:",
+            ifelse(inc_dec(2)[2] == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(yellow_now$year_month[1], "%B %Y"),
+        ".",
+        br(),
+        "Total unique vehicles (Traditional FHV excluded): ",
+        span(format(yellow_now[[3]][3], big.mark = ','), style = 'font-size:21px; font-weight:bold'),
+        " in ",
+        format(yellow_now$year_month[3], "%B %Y"),
+        ", which is a ",
+        span(
+          paste0(abs(round(((yellow_now[[3]][3] - yellow_now[[3]][2]) / yellow_now[[3]][2]) * 100, 1
+          )), "% ", inc_dec(3)[1]),
+          style = paste0(
+            "color:",
+            ifelse(inc_dec(3)[1] == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(ymd(yellow_now$year_month[2]), "%B %Y"),
+        " and ",
+        span(
+          paste0(abs(round(((yellow_now[[3]][3] - yellow_now[[3]][1]) / yellow_now[[3]][1]) *
+                             100, 1
+          )), "% ", inc_dec(3)[2]),
+          style = paste0(
+            "color:",
+            ifelse(inc_dec(3)[2] == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(yellow_now$year_month[1], "%B %Y"),
+        ".",
+        br(),
+        "Total unique drivers (Traditional FHV excluded): ",
+        span(format(yellow_now[[4]][3], big.mark = ','), style = 'font-size:21px; font-weight:bold'),
+        " in ",
+        format(yellow_now$year_month[3], "%B %Y"),
+        ", which is a ",
+        span(
+          paste0(abs(round(((yellow_now[[4]][3] - yellow_now[[4]][2]) / yellow_now[[4]][2]) * 100, 1
+          )), "% ", inc_dec(4)[1]),
+          style = paste0(
+            "color:",
+            ifelse(inc_dec(4)[1] == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(ymd(yellow_now$year_month[2]), "%B %Y"),
+        " and ",
+        span(
+          paste0(abs(round(((yellow_now[[4]][3] - yellow_now[[4]][1]) / yellow_now[[4]][1]) *
+                             100, 1
+          )), "% ", inc_dec(4)[2]),
+          style = paste0(
+            "color:",
+            ifelse(inc_dec(4)[2] == 'increase', '#05b705', '#ff5520'),
+            ";font-size:21px; font-weight:bold"
+          )
+        ),
+        " compared to ",
+        format(yellow_now$year_month[1], "%B %Y"),
+        "."
+        
+        
+        
+        
+      )
+    
+
+    return(valueBox(
+      box_name,
+      caption = capt1,
+      icon = icon_name,
+      color = box_color
+    ))
+    
+  }
+
+ # This function generates conditional valueboxes for the industry inds depending on increase or decrease in values
+# It provides m to m and y to y trip num comparisons End ------------------------------- 
 
 ```
 
