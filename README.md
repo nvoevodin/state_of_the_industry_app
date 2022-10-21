@@ -65,20 +65,13 @@ graph LR
 ### DataHub Data Flow
 
 ```mermaid    
-graph LR
-    DuckDB{Local .Parquet <br> repo <br> holds raw trip data} -->|anonymized <br> processed| A(AWS S3 Bucket)
-    A --> |picked up| OpenData(NYC Open Data Portal)
-    A --> |uploaded| TLCWeb(TLC WebSite)
-    DuckDB{Local .Parquet <br> repo <br> holds raw trip data} -->|anonymized <br> processed| DataHubBackend(Scheduled DataHub <br> Backend .py Script)
-    DataHubBackend --> |scheduled push| Git(Git Repo that contains <br> processed data for the DataHub)
-
-```
-
-```mermaid
-
-graph LR
-    Git(Git Repo that contains <br> processed data for the DataHub) --> |data pulled <br> into the app| DataHub{TLC DataHub App} 
-
+graph TD
+    warehouse[Azure SQL <br> DataWarehouse] -->|SQL Pulls| SQL(Daily Trips <br> Base List <br> Trips by Zone <br> Utilization Rates <br> Wait Times)
+    SQL --> |Rmd internal aggs| dash{State of the Industry}
+    II[Industry Indicators <br> Report-TLC website] --> |Rmd internal aggs| dash{State of the Industry}
+    VZ[Vision Zero <br> Report-Internal] --> |Rmd internal aggs| dash{State of the Industry}
+    LL31[LL31 <br> Report-TLC website] --> |Rmd internal aggs| dash{State of the Industry}
+    dash --> |job to push <br> to Git| Git(Hosted on GitHub Pages at:<br>https://analytics-tlc.github.io/state_of_industry )
 
 ```
 
