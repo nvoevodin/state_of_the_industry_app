@@ -14,7 +14,7 @@ This State of the Industry data portal presents TLC’s data in a more accessibl
 
 Currently, the app includes the following dashboards:
 
-- &#x1F4C8; **Trips Dashboard** <img src="all.PNG" align="right" width="35%"  />
+- &#x1F4C8; **Trips Dashboard** <img src="all.png" align="right" width="35%"  />
 
     The 'Trip Data' dashboard displays and compares the pickup, dropoff, trip, trip fare, trip time, and trip distance data across different locations, industries and periods.
     
