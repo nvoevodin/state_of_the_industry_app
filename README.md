@@ -62,7 +62,7 @@ graph LR
     DuckDB -->|Data Bricks| Apps[Apps]
     DuckDB -->|Data Bricks| PublicData[Public Data]
 ``` 
-### DataHub Data Flow
+### State of the Industry Data Flow
 
 ```mermaid    
 graph TD
